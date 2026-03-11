@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Open Photo</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;1,400&family=DM+Sans:wght@300;400;500&family=JetBrains+Mono:wght@300;400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+:root{--bg:#0c0b09;--bg2:#141210;--bg3:#1c1a16;--border:#2e2b22;--text:#e8e4dc;--dim:#8a8275;--accent:#d4a853;--font:'DM Sans',sans-serif;--serif:'Playfair Display',serif;--mono:'JetBrains Mono',monospace}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:var(--font)}
+#app{display:flex;flex-direction:column;height:100vh}
+#bar{display:flex;align-items:center;gap:16px;padding:0 24px;height:52px;background:var(--bg2);border-bottom:1px solid var(--border);flex-shrink:0}
+#bar h1{font-family:var(--serif);font-size:1.1rem;color:var(--accent);letter-spacing:.02em;white-space:nowrap}
+#bar .stats{font-family:var(--mono);font-size:.65rem;color:var(--dim)}
+#nav{display:flex;gap:4px;margin-left:auto}
+#nav button{background:none;border:none;color:var(--dim);padding:6px 14px;border-radius:4px;font-size:.8rem;cursor:pointer;font-family:var(--font);transition:.15s}
+#nav button.active,#nav button:hover{color:var(--accent);background:rgba(212,168,83,.1)}
+#search-wrap{position:relative;flex:1;max-width:400px}
+#search-wrap input{width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:7px 12px;border-radius:6px;font-size:.85rem;font-family:var(--font);outline:none}
+#search-wrap input:focus{border-color:var(--accent)}
+#main{flex:1;overflow:hidden;position:relative}
+.view{position:absolute;inset:0;overflow-y:auto;padding:20px;display:none}
+.view.active{display:block}
+#gallery-grid{columns:5 200px;gap:8px}
+.thumb{break-inside:avoid;margin-bottom:8px;position:relative;cursor:pointer;border-radius:4px;overflow:hidden;background:var(--bg3)}
+.thumb img{width:100%;display:block;transition:.2s}
+.thumb:hover img{opacity:.85}
+.thumb .overlay{position:absolute;bottom:0;left:0;right:0;padding:8px;background:linear-gradient(transparent,rgba(0,0,0,.8));font-size:.65rem;color:#ddd;opacity:0;transition:.2s;font-family:var(--mono)}
+.thumb:hover .overlay{opacity:1}
+#timeline-list{display:flex;flex-direction:column;gap:24px}
+.tl-year{font-family:var(--serif);font-size:1.4rem;color:var(--accent);margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:8px}
+.tl-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}
+#people-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}
+.person-card{background:var(--bg3);border:1px solid var(--border);border-radius:8px;overflow:hidden;cursor:pointer;transition:.15s}
+.person-card:hover{border-color:var(--accent)}
+.person-card .face-crop{width:100%;aspect-ratio:1;background:var(--bg2);overflow:hidden;position:relative}
+.person-card .pname{padding:10px;font-size:.8rem;color:var(--dim)}
+.person-card .pname b{display:block;color:var(--text);font-weight:500}
+#map{width:100%;height:100%}
+#modal{display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.85);align-items:center;justify-content:center}
+#modal.open{display:flex}
+#modal-inner{background:var(--bg2);border:1px solid var(--border);border-radius:10px;max-width:900px;width:90%;max-height:90vh;overflow-y:auto;display:flex;flex-direction:column}
+#modal-img{max-height:55vh;object-fit:contain;width:100%;background:#000;border-radius:10px 10px 0 0}
+#modal-info{padding:20px;display:flex;flex-direction:column;gap:10px}
+#modal-info h2{font-family:var(--serif);font-size:1.1rem}
+#modal-info .caption{color:var(--dim);font-size:.85rem;line-height:1.6}
+#modal-info .meta{font-family:var(--mono);font-size:.65rem;color:var(--dim);display:flex;flex-wrap:wrap;gap:12px}
+#modal-close{position:absolute;top:16px;right:20px;background:none;border:none;color:var(--dim);font-size:1.4rem;cursor:pointer}
+.hidden{display:none!important}
+#loading{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:var(--bg);z-index:999;font-family:var(--serif);color:var(--accent);font-size:1.2rem}
+</style>
+</head>
+<body>
+<div id="loading">Opening the archive…</div>
+<div id="app">
+  <div id="bar">
+    <h1>Open Photo</h1>
+    <span class="stats" id="stats-label"></span>
+    <div id="search-wrap">
+      <input id="search" placeholder="Search memories… (Enter)" />
+    </div>
+    <div id="nav">
+      <button class="active" onclick="showView('gallery')">Gallery</button>
+      <button onclick="showView('timeline')">Timeline</button>
+      <button onclick="showView('people')">People</button>
+      <button onclick="showView('map')">Map</button>
+    </div>
+  </div>
+  <div id="main">
+    <div id="gallery" class="view active"><div id="gallery-grid"></div></div>
+    <div id="timeline" class="view"><div id="timeline-list"></div></div>
+    <div id="people" class="view"><div id="people-grid"></div></div>
+    <div id="map-view" class="view"><div id="map"></div></div>
+  </div>
+</div>
+<div id="modal">
+  <button id="modal-close" onclick="closeModal()">✕</button>
+  <div id="modal-inner">
+    <img id="modal-img" src="" alt="">
+    <div id="modal-info">
+      <h2 id="modal-title"></h2>
+      <div class="caption" id="modal-caption"></div>
+      <div class="meta" id="modal-meta"></div>
+    </div>
+  </div>
+</div>
+<script>
+const API = '';
+let _map = null;
+
+const $ = id => document.getElementById(id);
+async function api(path) { const r = await fetch(API + path); return r.json(); }
+function thumb(t) { return t ? `${API}/uploads/${t}` : ''; }
+
+function showView(name) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.querySelectorAll('#nav button').forEach(b => b.classList.remove('active'));
+  const viewEl = name === 'map' ? $('map-view') : $(name);
+  viewEl.classList.add('active');
+  document.querySelectorAll('#nav button').forEach(b => { if (b.textContent.toLowerCase() === name) b.classList.add('active'); });
+  if (name === 'gallery') loadGallery();
+  if (name === 'timeline') loadTimeline();
+  if (name === 'people') loadPeople();
+  if (name === 'map') loadMap();
+}
+
+async function loadGallery(q) {
+  const endpoint = q ? `/api/search?q=${encodeURIComponent(q)}&mode=combined&limit=200` : '/api/timeline?limit=200';
+  const data = await api(endpoint);
+  const items = data.results || data.items || [];
+  $('gallery-grid').innerHTML = items.map(m => `
+    <div class="thumb" onclick="openModal('${m.id}')">
+      <img src="${thumb(m.thumbnail_path)}" loading="lazy" alt="">
+      <div class="overlay">${m.taken_at ? m.taken_at.slice(0,10) : ''} ${m.album||''}</div>
+    </div>`).join('');
+}
+
+async function loadTimeline() {
+  const items = await api('/api/timeline?limit=500');
+  const byYear = {};
+  (items.items||[]).forEach(m => { const y = (m.taken_at||'').slice(0,4)||'Unknown'; (byYear[y]=byYear[y]||[]).push(m); });
+  $('timeline-list').innerHTML = Object.keys(byYear).sort().reverse().map(y => `
+    <div>
+      <div class="tl-year">${y} <span style="font-size:.7rem;font-family:var(--mono);color:var(--dim)">${byYear[y].length} photos</span></div>
+      <div class="tl-grid">${byYear[y].map(m => `<div class="thumb" onclick="openModal('${m.id}')"><img src="${thumb(m.thumbnail_path)}" loading="lazy" style="width:100%;display:block"></div>`).join('')}</div>
+    </div>`).join('');
+}
+
+async function loadPeople() {
+  const data = await api('/api/people?limit=100');
+  const people = data.people || [];
+  if (!people.length) { $('people-grid').innerHTML = '<p style="color:var(--dim);padding:20px">No face clusters yet.</p>'; return; }
+  $('people-grid').innerHTML = people.map(p => {
+    const name = p.person_name || p.anonymous_label;
+    let inner = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--dim);font-size:2rem">👤</div>`;
+    if (p.cover_thumb && p.bbox_w) {
+      const scale = 160 / Math.max(p.bbox_w, p.bbox_h, 1) * 1.5;
+      inner = `<div style="background-image:url(${thumb(p.cover_thumb)});background-size:${scale*100}%;background-position:-${p.bbox_x*scale-20}px -${p.bbox_y*scale-20}px;width:100%;height:100%"></div>`;
+    }
+    return `<div class="person-card"><div class="face-crop">${inner}</div><div class="pname"><b>${name}</b>${p.face_count} appearances</div></div>`;
+  }).join('');
+}
+
+async function loadMap() {
+  if (_map) { _map.invalidateSize(); return; }
+  const data = await api('/api/map');
+  const items = data.items || [];
+  if (!items.length) return;
+  _map = L.map('map').setView([items[0].geo_lat, items[0].geo_lon], 10);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OSM'}).addTo(_map);
+  items.forEach(m => L.circleMarker([m.geo_lat,m.geo_lon],{radius:5,color:'#d4a853',fillOpacity:.7,weight:1})
+    .bindPopup(`<img src="${thumb(m.thumbnail_path)}" style="width:120px"><br><small>${m.taken_at?.slice(0,10)||''}</small>`)
+    .addTo(_map));
+}
+
+async function openModal(id) {
+  const m = await api(`/api/media/${id}`);
+  $('modal-img').src = m.thumbnail_path ? `/uploads/${m.thumbnail_path}` : '';
+  $('modal-title').textContent = m.original_filename || m.label || id;
+  $('modal-caption').textContent = m.caption || '';
+  $('modal-meta').innerHTML = [
+    m.taken_at && `📅 ${m.taken_at.slice(0,10)}`,
+    m.camera_make && `📷 ${m.camera_make} ${m.camera_model||''}`,
+    m.width && `📐 ${m.width}×${m.height}`,
+    m.geo_lat && `📍 ${m.geo_lat.toFixed(4)}, ${m.geo_lon.toFixed(4)}`,
+    m.album && `📁 ${m.album}`,
+  ].filter(Boolean).map(s=>`<span>${s}</span>`).join('');
+  $('modal').classList.add('open');
+}
+
+function closeModal() { $('modal').classList.remove('open'); }
+document.addEventListener('keydown', e => { if (e.key==='Escape') closeModal(); });
+$('search').addEventListener('keydown', e => { if (e.key==='Enter') { showView('gallery'); loadGallery(e.target.value); } });
+
+async function init() {
+  const stats = await api('/api/stats');
+  $('stats-label').textContent = `${stats.total?.toLocaleString()} photos · ${stats.faces?.toLocaleString()} faces`;
+  $('loading').classList.add('hidden');
+  loadGallery();
+}
+init();
+</script>
+</body>
+</html>

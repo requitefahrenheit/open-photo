@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.pyo
+*.log
+op.db
+op.db-shm
+op.db-wal
+op.db-corrupt
+op-media.sql
+uploads/
+watchdog.log
+import.log
+server.log
+env.sh

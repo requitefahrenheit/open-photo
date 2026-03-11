@@ -1,0 +1,2837 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Open Photo v2.1</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@300;400&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+:root {
+  --bg:        #0c0b09;
+  --bg2:       #141210;
+  --bg3:       #1c1a16;
+  --surface:   #222018;
+  --border:    #2e2b22;
+  --text:      #e8e4dc;
+  --text-dim:  #8a8275;
+  --text-muted:#4a4640;
+  --accent:    #d4a853;
+  --accent2:   #b88a3a;
+  --accent-dim:rgba(212,168,83,0.12);
+  --warm:      #e8c07a;
+  --cool:      #7ab8e8;
+  --font:      'DM Sans', sans-serif;
+  --serif:     'Playfair Display', serif;
+  --mono:      'JetBrains Mono', monospace;
+  --radius:    8px;
+  --shadow:    0 8px 40px rgba(0,0,0,0.6);
+}
+
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body { width:100%; height:100%; overflow:hidden; background:var(--bg); color:var(--text); font-family:var(--font); }
+
+/* Grain overlay */
+body::before {
+  content:''; position:fixed; inset:0; pointer-events:none; z-index:999;
+  opacity:0.03;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+}
+
+::-webkit-scrollbar { width:4px; }
+::-webkit-scrollbar-track { background:transparent; }
+::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px; }
+
+@media (max-width:480px) and (pointer:coarse) {
+  #view-scatter.active, #view-poincare.active {
+    position:fixed !important; inset:0 !important; z-index:50 !important;
+  }
+  #top-bar {
+    z-index:200 !important; background:rgba(12,11,9,0.95) !important; backdrop-filter:blur(8px);
+    height:auto !important; flex-wrap:wrap; padding:8px 12px !important; gap:8px !important;
+  }
+  .logo { font-size:14px !important; gap:6px !important; }
+  #search-btn, #stats-chip { display:none !important; }
+  .nav-tab { padding:5px 9px; font-size:10px; }
+  #count-chips { margin-left:0 !important; }
+  .count-chip { padding:3px 7px !important; font-size:9px !important; }
+  #views { top:80px !important; }
+}
+
+/* ── Top bar ── */
+#top-bar {
+  position:fixed; top:0; left:0; right:0; height:56px;
+  display:flex; align-items:center; padding:0 24px; gap:20px;
+  background:linear-gradient(180deg, rgba(12,11,9,0.98) 0%, rgba(12,11,9,0) 100%);
+  z-index:100; pointer-events:none;
+}
+#top-bar > * { pointer-events:all; }
+
+.logo {
+  font-family:var(--serif); font-size:17px; font-weight:400;
+  color:var(--accent); letter-spacing:0.02em; display:flex; align-items:center; gap:10px;
+  font-style:italic;
+}
+.logo-aperture {
+  width:20px; height:20px; position:relative;
+}
+.logo-aperture::before {
+  content:''; position:absolute; inset:0; border-radius:50%;
+  border:1.5px solid var(--accent);
+  box-shadow:0 0 8px rgba(212,168,83,0.4);
+}
+.logo-aperture::after {
+  content:''; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+  width:7px; height:7px; border-radius:50%; background:var(--accent);
+  box-shadow:0 0 6px var(--accent);
+}
+
+#nav-tabs {
+  display:inline-flex; gap:2px;
+  background:var(--bg3); border:1px solid var(--border);
+  border-radius:10px; padding:2px;
+  margin-left:16px;
+  overflow-x:auto; -webkit-overflow-scrolling:touch; scrollbar-width:none;
+}
+.nav-tab {
+  padding:5px 13px; border-radius:8px; border:none; cursor:pointer;
+  font-family:var(--mono); font-size:11px; font-weight:500; letter-spacing:0.04em;
+  background:transparent; color:var(--text-dim); transition:all 0.15s;
+  white-space:nowrap;
+}
+.nav-tab:hover { background:rgba(255,255,255,0.07); color:var(--text); }
+.nav-tab.active { background:var(--accent); color:var(--bg); font-weight:700; }
+
+#search-btn {
+  width:34px; height:34px; border-radius:8px; border:1px solid var(--border);
+  background:transparent; color:var(--text-dim); cursor:pointer;
+  display:flex; align-items:center; justify-content:center; transition:all 0.2s;
+  font-size:14px;
+}
+#search-btn:hover { border-color:var(--accent); color:var(--accent); }
+
+#stats-chip {
+  font-family:var(--mono); font-size:10px; color:var(--text-muted);
+  margin-left:auto; white-space:nowrap;
+  display:flex; align-items:center; gap:6px;
+}
+
+/* ── Views ── */
+#views { position:fixed; inset:0; top:56px; }
+.view { display:none; width:100%; height:100%; overflow-y:auto; }
+.view.active { display:block; }
+
+/* ── People View ── */
+#view-people {
+  padding:32px 24px 80px;
+}
+
+#people-header {
+  margin-bottom:28px;
+}
+#people-header h1 {
+  font-family:var(--serif); font-size:28px; font-weight:400; font-style:italic;
+  color:var(--text); letter-spacing:-0.02em;
+}
+#people-header p {
+  font-size:13px; color:var(--text-dim); margin-top:4px;
+}
+
+#people-grid {
+  display:grid;
+  grid-template-columns:repeat(auto-fill, minmax(160px, 1fr));
+  gap:20px;
+}
+
+.person-card {
+  cursor:pointer; position:relative; border-radius:12px; overflow:hidden;
+  background:var(--surface); border:1px solid var(--border);
+  transition:transform 0.2s, border-color 0.2s, box-shadow 0.2s;
+  aspect-ratio:3/4;
+}
+.person-card:hover {
+  transform:translateY(-4px);
+  border-color:var(--accent);
+  box-shadow:0 16px 40px rgba(0,0,0,0.5), 0 0 0 1px rgba(212,168,83,0.2);
+}
+.person-card .face-img {
+  width:100%; height:100%; object-fit:cover; display:block;
+  transition:transform 0.3s;
+}
+.person-card:hover .face-img { transform:scale(1.05); }
+.person-card .face-placeholder {
+  width:100%; height:100%; display:flex; align-items:center; justify-content:center;
+  font-size:48px; background:var(--bg3); color:var(--text-muted);
+}
+.person-card-info {
+  position:absolute; bottom:0; left:0; right:0;
+  padding:36px 12px 12px;
+  background:linear-gradient(0deg, rgba(12,11,9,0.95) 0%, transparent 100%);
+}
+.person-card-name {
+  font-family:var(--serif); font-size:14px; font-weight:600;
+  color:var(--text); line-height:1.2; margin-bottom:2px;
+}
+.person-card-count {
+  font-family:var(--mono); font-size:10px; color:var(--accent); letter-spacing:0.05em;
+}
+.person-card-unnamed { color:var(--text-dim); font-style:italic; }
+
+/* ── Gallery View ── */
+#view-gallery { padding:24px; }
+
+#gallery-toolbar {
+  display:flex; gap:10px; align-items:center; margin-bottom:20px; flex-wrap:wrap;
+}
+
+.filter-pill {
+  padding:5px 12px; border-radius:20px; border:1px solid var(--border);
+  background:transparent; color:var(--text-dim); cursor:pointer;
+  font-family:var(--mono); font-size:11px; transition:all 0.2s;
+}
+.filter-pill:hover, .filter-pill.active {
+  border-color:var(--accent); color:var(--accent); background:var(--accent-dim);
+}
+
+#year-select {
+  background:var(--surface); border:1px solid var(--border); color:var(--text);
+  padding:5px 10px; border-radius:6px; font-family:var(--mono); font-size:11px;
+  cursor:pointer; outline:none;
+}
+
+#gallery-grid {
+  columns:4; column-gap:12px;
+}
+@media (max-width:1200px) { #gallery-grid { columns:3; } }
+@media (max-width:800px) { #gallery-grid { columns:2; } }
+
+.gallery-item {
+  break-inside:avoid; margin-bottom:12px; position:relative;
+  border-radius:8px; overflow:hidden; cursor:pointer;
+  background:var(--surface);
+}
+.gallery-item img {
+  width:100%; display:block; transition:transform 0.3s;
+}
+.gallery-item:hover img { transform:scale(1.03); }
+.gallery-item-overlay {
+  position:absolute; inset:0; opacity:0; transition:opacity 0.25s;
+  background:linear-gradient(0deg, rgba(12,11,9,0.9) 0%, transparent 50%);
+  display:flex; flex-direction:column; justify-content:flex-end; padding:12px;
+}
+.gallery-item:hover .gallery-item-overlay { opacity:1; }
+.gallery-item-date {
+  font-family:var(--mono); font-size:10px; color:var(--accent); margin-bottom:2px;
+}
+.gallery-item-caption {
+  font-size:12px; color:var(--text); line-height:1.3;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+}
+.gallery-item-video-badge {
+  position:absolute; top:8px; right:8px; background:rgba(0,0,0,0.7);
+  border-radius:4px; padding:2px 6px; font-family:var(--mono); font-size:9px; color:var(--warm);
+}
+
+#gallery-load-more {
+  text-align:center; padding:24px;
+}
+.load-more-btn {
+  padding:10px 28px; border:1px solid var(--border); border-radius:8px;
+  background:transparent; color:var(--text-dim); cursor:pointer; font-family:var(--mono);
+  font-size:12px; transition:all 0.2s;
+}
+.load-more-btn:hover { border-color:var(--accent); color:var(--accent); }
+
+/* ── Timeline View ── */
+#view-timeline { display:flex; flex-direction:column; height:100%; }
+
+#timeline-scrubber {
+  padding:16px 24px; background:var(--bg2); border-bottom:1px solid var(--border);
+  flex-shrink:0;
+}
+#timeline-years {
+  display:flex; gap:2px; overflow-x:auto; padding-bottom:8px;
+  scrollbar-width:thin;
+}
+.year-block {
+  flex-shrink:0; cursor:pointer; padding:4px 10px; border-radius:4px;
+  font-family:var(--mono); font-size:11px; color:var(--text-dim);
+  border:1px solid transparent; transition:all 0.15s;
+  position:relative;
+}
+.year-block:hover { color:var(--text); background:var(--surface); }
+.year-block.active { color:var(--accent); border-color:var(--accent); background:var(--accent-dim); }
+.year-block .year-count {
+  font-size:9px; color:var(--text-muted); display:block; text-align:center;
+}
+
+#timeline-months {
+  display:flex; gap:2px; margin-top:6px; flex-wrap:wrap;
+}
+.month-chip {
+  font-family:var(--mono); font-size:10px; padding:3px 8px; border-radius:4px;
+  cursor:pointer; color:var(--text-muted); transition:all 0.15s;
+  border:1px solid transparent;
+}
+.month-chip:hover { color:var(--text); background:var(--surface); }
+.month-chip.active { color:var(--accent); border-color:var(--border); }
+
+#timeline-content {
+  flex:1; overflow-y:auto; padding:20px 24px;
+}
+
+.timeline-day {
+  margin-bottom:24px;
+}
+.timeline-day-label {
+  font-family:var(--mono); font-size:11px; color:var(--text-muted);
+  margin-bottom:10px; letter-spacing:0.08em; text-transform:uppercase;
+}
+.timeline-day-photos {
+  display:flex; gap:6px; flex-wrap:wrap;
+}
+.timeline-thumb {
+  width:120px; height:120px; object-fit:cover; border-radius:6px;
+  cursor:pointer; transition:transform 0.2s, box-shadow 0.2s;
+  background:var(--surface);
+}
+.timeline-thumb:hover {
+  transform:scale(1.05);
+  box-shadow:0 8px 24px rgba(0,0,0,0.5);
+  z-index:1; position:relative;
+}
+
+/* ── Map View ── */
+#view-map { position:relative; }
+
+/* ── Scatter view ── */
+#view-scatter { position:absolute; inset:0; overflow:hidden; background:var(--bg); cursor:grab; touch-action:none; }
+#view-scatter.dragging { cursor:grabbing; }
+.scatter-loading { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; flex-direction:column; gap:12px; color:var(--text-dim); font-size:14px; z-index:5; }
+@keyframes spin { to { transform:rotate(360deg); } }
+.spinner { width:32px; height:32px; border:3px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:spin 0.8s linear infinite; }
+#scatter-field { position:absolute; top:0; left:0; transform-origin:0 0; will-change:transform; }
+.scatter-tile {
+  position:absolute; width:48px; height:48px; border-radius:5px;
+  background-color:#16202e; background-size:cover; background-position:center;
+  opacity:0; transition: opacity 0.4s ease, transform 0.18s ease, box-shadow 0.18s ease;
+  transform-origin:center; cursor:pointer;
+}
+.scatter-tile.loaded { opacity:1; }
+.scatter-tile:hover {
+  transform:scale(2.2); z-index:100;
+  box-shadow:0 0 20px rgba(212,168,83,0.4), 0 4px 16px rgba(0,0,0,0.6);
+  border-radius:4px;
+}
+#scatter-status { display:none !important; }
+#count-chips { display:inline-flex; gap:2px; background:var(--bg3); border:1px solid var(--border); border-radius:8px; padding:2px; margin-left:auto; }
+.count-chip { font-family:var(--mono); font-size:10px; padding:4px 8px; border:none; border-radius:6px; background:transparent; color:var(--text-dim); cursor:pointer; white-space:nowrap; }
+.count-chip.active { background:var(--accent); color:var(--bg); font-weight:700; }
+#scatter-tooltip { position:fixed; pointer-events:none; background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:7px 10px; font-size:11px; color:var(--text); max-width:180px; z-index:20; display:none; }
+
+/* ── Poincaré view ── */
+#view-poincare { position:absolute; inset:0; overflow:hidden; background:var(--bg); touch-action:none; cursor:grab; }
+.pd-loading { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; flex-direction:column; gap:12px; color:var(--muted); font-size:14px; pointer-events:none; }
+#pd-empty { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:14px; font-style:italic; pointer-events:none; }
+#pd-svg { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+#pd-svg * { pointer-events:none; }
+#pd-gl-canvas { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+.pd-boundary { fill:none; stroke:rgba(110,231,183,0.08); stroke-width:1; }
+.pd-edge { fill:none; stroke-linecap:round; }
+.pd-node { cursor:pointer; }
+.pd-node:hover > rect { filter:brightness(1.3); }
+.pd-node.pd-selected > rect { stroke:var(--accent) !important; stroke-width:3; filter:drop-shadow(0 0 8px rgba(110,231,183,0.4)); }
+.pd-center-glow { fill:none; stroke:var(--accent); stroke-opacity:0.15; }
+#pd-nav { position:absolute; top:0; left:0; right:0; z-index:10; padding:10px 16px; display:flex; align-items:center; gap:8px; background:linear-gradient(180deg,rgba(10,10,15,0.85) 0%,transparent 100%); pointer-events:none; }
+#pd-nav > * { pointer-events:all; }
+.pd-nav-btn { font-family:var(--mono); font-size:11px; padding:5px 12px; border-radius:6px; border:1px solid var(--border); background:transparent; color:var(--muted); cursor:pointer; }
+.pd-nav-btn:hover { border-color:var(--accent); color:var(--accent); }
+.pd-nav-btn:disabled { opacity:0.3; cursor:not-allowed; }
+#pd-breadcrumb { font-size:12px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; min-width:0; }
+#pd-force-wrap { display:flex; flex-direction:column; gap:4px; flex-shrink:0; margin-left:4px; }
+.pd-slider-row { display:flex; align-items:center; gap:6px; }
+#pd-force-label, #pd-sim-label { font-family:var(--mono); font-size:10px; color:var(--text-dim); white-space:nowrap; width:52px; }
+#pd-force-slider, #pd-sim-slider { width:216px; height:14px; cursor:pointer; accent-color:#d4a853; }
+#pd-detail {
+  position:absolute; bottom:0; left:0; right:0; z-index:15;
+  height:50%; background:var(--bg2); border-top:1px solid var(--border);
+  display:flex; cursor:pointer;
+  transform:translateY(100%); transition:transform 0.3s cubic-bezier(0.32,0.72,0,1);
+  pointer-events:none;
+}
+#pd-detail.open { transform:translateY(0); pointer-events:all; }
+#pd-detail-img {
+  flex:0 0 50%; height:100%;
+  background-size:contain; background-position:center; background-repeat:no-repeat;
+  background-color:var(--bg);
+}
+#pd-detail-info { flex:1; min-width:0; padding:28px 24px; overflow-y:auto; display:flex; flex-direction:column; gap:10px; }
+#pd-detail-date { font-family:var(--mono); font-size:11px; color:var(--accent); letter-spacing:0.08em; }
+#pd-detail-label { font-family:var(--serif); font-size:22px; font-weight:400; color:var(--text); line-height:1.2; }
+#pd-detail-caption { font-size:13px; color:var(--text-dim); line-height:1.6; flex:1; }
+#pd-detail-close { display:none; }
+#pd-detail-full-btn { align-self:flex-start; margin-top:auto; font-size:11px; font-family:var(--mono); padding:6px 14px; border:1px solid var(--border); border-radius:6px; background:transparent; color:var(--text-dim); cursor:pointer; }
+#pd-detail-full-btn:hover { border-color:var(--accent); color:var(--accent); }
+#pd-tooltip { position:fixed; pointer-events:none; background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:7px 10px; font-size:11px; color:var(--text); max-width:180px; z-index:20; display:none; }
+#map-container { width:100%; height:100%; }
+#leaflet-map { width:100%; height:100%; }
+
+#map-popup-overlay {
+  position:absolute; bottom:24px; left:50%; transform:translateX(-50%);
+  background:var(--surface); border:1px solid var(--border); border-radius:12px;
+  padding:12px; display:none; width:240px; z-index:1000; box-shadow:var(--shadow);
+}
+#map-popup-overlay.visible { display:block; }
+#map-popup-img { width:100%; height:140px; object-fit:cover; border-radius:8px; margin-bottom:8px; }
+#map-popup-info { font-size:12px; color:var(--text-dim); }
+#map-popup-title { font-family:var(--serif); font-size:14px; color:var(--text); margin-bottom:4px; }
+
+/* ── Search overlay ── */
+#search-overlay {
+  position:fixed; inset:0; z-index:500; display:none; flex-direction:column;
+  background:rgba(12,11,9,0.96); backdrop-filter:blur(12px);
+}
+#search-overlay.visible { display:flex; }
+
+#search-bar {
+  padding:28px 40px 16px;
+  border-bottom:1px solid var(--border);
+}
+#search-input-wrap {
+  display:flex; align-items:center; gap:12px;
+  border:1px solid var(--border); border-radius:12px;
+  padding:12px 18px; background:var(--surface);
+  transition:border-color 0.2s;
+}
+#search-input-wrap:focus-within { border-color:var(--accent); }
+#search-icon { font-size:16px; color:var(--text-muted); }
+#search-input {
+  flex:1; border:none; outline:none; background:transparent;
+  font-family:var(--serif); font-size:20px; font-style:italic; color:var(--text);
+}
+#search-input::placeholder { color:var(--text-muted); }
+#search-close {
+  width:32px; height:32px; border-radius:8px; border:none; cursor:pointer;
+  background:transparent; color:var(--text-dim); font-size:18px; transition:color 0.2s;
+}
+#search-close:hover { color:var(--text); }
+
+#search-mode-tabs {
+  display:flex; gap:8px; margin-top:12px;
+}
+.search-mode-tab {
+  padding:4px 12px; border-radius:20px; border:1px solid var(--border);
+  background:transparent; color:var(--text-dim); cursor:pointer;
+  font-family:var(--mono); font-size:11px; transition:all 0.2s;
+}
+.search-mode-tab.active { border-color:var(--accent); color:var(--accent); background:var(--accent-dim); }
+
+#search-results {
+  flex:1; overflow-y:auto; padding:24px 40px;
+}
+#search-results-grid {
+  display:grid; grid-template-columns:repeat(auto-fill, minmax(180px, 1fr)); gap:14px;
+}
+#search-empty {
+  text-align:center; padding:60px 0;
+  font-family:var(--serif); font-size:18px; font-style:italic; color:var(--text-dim);
+}
+.search-result-item {
+  cursor:pointer; border-radius:10px; overflow:hidden; position:relative;
+  background:var(--surface); aspect-ratio:1; transition:transform 0.2s;
+}
+.search-result-item:hover { transform:scale(1.03); }
+.search-result-item img { width:100%; height:100%; object-fit:cover; display:block; }
+.search-result-score {
+  position:absolute; top:6px; right:6px; background:rgba(12,11,9,0.8);
+  border-radius:4px; padding:2px 6px; font-family:var(--mono); font-size:9px;
+  color:var(--accent);
+}
+.search-result-caption {
+  position:absolute; bottom:0; left:0; right:0; padding:24px 8px 8px;
+  background:linear-gradient(0deg, rgba(12,11,9,0.9), transparent);
+  font-size:11px; color:var(--text); opacity:0; transition:opacity 0.2s;
+  line-height:1.3;
+}
+.search-result-item:hover .search-result-caption { opacity:1; }
+
+/* ── Detail Panel ── */
+#detail-panel {
+  position:fixed; top:0; right:0; bottom:0; width:440px;
+  background:var(--bg2); border-left:1px solid var(--border);
+  z-index:200; transform:translateX(100%); transition:transform 0.3s cubic-bezier(0.32,0.72,0,1);
+  overflow-y:auto; display:flex; flex-direction:column;
+}
+#detail-panel.open { transform:translateX(0); }
+
+#detail-close {
+  position:sticky; top:0; z-index:1; padding:12px 16px;
+  background:var(--bg2); border-bottom:1px solid var(--border);
+  display:flex; justify-content:space-between; align-items:center;
+}
+#detail-close-btn {
+  width:32px; height:32px; border-radius:8px; border:none; cursor:pointer;
+  background:var(--surface); color:var(--text-dim); font-size:16px; transition:all 0.2s;
+}
+#detail-close-btn:hover { background:var(--border); color:var(--text); }
+#detail-title {
+  font-family:var(--serif); font-size:14px; font-style:italic; color:var(--text-dim);
+}
+
+#detail-img-wrap {
+  position:relative; background:var(--bg);
+}
+#detail-img {
+  width:100%; height:300px; background-size:contain; background-position:center; background-repeat:no-repeat;
+}
+
+#detail-body { padding:20px; flex:1; }
+
+#detail-caption {
+  font-family:var(--serif); font-size:15px; line-height:1.65; color:var(--text);
+  margin-bottom:20px; font-style:italic;
+}
+
+#detail-meta {
+  display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:20px;
+}
+.meta-item { background:var(--surface); border-radius:8px; padding:10px 12px; }
+.meta-label { font-family:var(--mono); font-size:9px; color:var(--text-muted); letter-spacing:0.1em; text-transform:uppercase; margin-bottom:3px; }
+.meta-value { font-size:12px; color:var(--text); word-break:break-word; }
+
+#detail-faces-section { margin-bottom:20px; }
+.section-title {
+  font-family:var(--mono); font-size:10px; color:var(--text-muted);
+  letter-spacing:0.1em; text-transform:uppercase; margin-bottom:10px;
+}
+#detail-faces-list {
+  display:flex; gap:8px; flex-wrap:wrap;
+}
+.face-chip {
+  display:flex; align-items:center; gap:6px; padding:4px 10px 4px 4px;
+  background:var(--surface); border:1px solid var(--border); border-radius:20px;
+  cursor:pointer; transition:all 0.2s;
+}
+.face-chip:hover { border-color:var(--accent); }
+.face-chip-thumb {
+  width:24px; height:24px; border-radius:50%; object-fit:cover; background:var(--bg3);
+}
+.face-chip-name { font-size:12px; color:var(--text); }
+.face-chip-anon { color:var(--text-dim); font-style:italic; font-size:11px; }
+
+#detail-similar { margin-bottom:20px; }
+#detail-similar-grid {
+  display:grid; grid-template-columns:repeat(4, 1fr); gap:6px;
+}
+.similar-thumb {
+  aspect-ratio:1; border-radius:6px; overflow:hidden; cursor:pointer;
+  background:var(--surface); transition:transform 0.2s;
+}
+.similar-thumb:hover { transform:scale(1.05); }
+.similar-thumb img { width:100%; height:100%; object-fit:cover; display:block; }
+
+#detail-actions {
+  display:flex; gap:8px; padding:0 20px 20px;
+}
+.action-btn {
+  flex:1; padding:10px; border-radius:8px; border:1px solid var(--border);
+  background:transparent; color:var(--text-dim); cursor:pointer;
+  font-family:var(--mono); font-size:11px; transition:all 0.2s;
+}
+.action-btn:hover { border-color:var(--accent); color:var(--accent); background:var(--accent-dim); }
+.action-btn.primary { background:var(--accent); border-color:var(--accent); color:var(--bg); }
+.action-btn.primary:hover { background:var(--accent2); border-color:var(--accent2); }
+
+/* ── Person detail ── */
+#person-panel {
+  position:fixed; inset:0; top:56px; z-index:150;
+  background:var(--bg); display:none; flex-direction:column;
+}
+#person-panel.open { display:flex; }
+
+#person-header {
+  padding:24px 32px; border-bottom:1px solid var(--border);
+  display:flex; align-items:center; gap:20px; background:var(--bg2); flex-shrink:0;
+}
+#person-back {
+  width:36px; height:36px; border-radius:8px; border:1px solid var(--border);
+  background:transparent; color:var(--text-dim); cursor:pointer; font-size:16px;
+  transition:all 0.2s; flex-shrink:0;
+}
+#person-back:hover { border-color:var(--accent); color:var(--accent); }
+#person-face-big {
+  width:60px; height:60px; border-radius:50%; object-fit:cover;
+  border:2px solid var(--accent); flex-shrink:0; background:var(--surface);
+}
+#person-name-wrap { flex:1; }
+#person-name-display {
+  font-family:var(--serif); font-size:22px; font-weight:400; color:var(--text);
+}
+#person-name-input {
+  font-family:var(--serif); font-size:22px; font-weight:400;
+  background:transparent; border:none; border-bottom:1px solid var(--accent);
+  color:var(--text); outline:none; width:100%; display:none;
+}
+#person-name-input::placeholder { color:var(--text-muted); }
+#person-count {
+  font-family:var(--mono); font-size:11px; color:var(--text-muted); margin-top:2px;
+}
+#person-name-edit-btn {
+  padding:6px 14px; border-radius:6px; border:1px solid var(--border);
+  background:transparent; color:var(--text-dim); cursor:pointer;
+  font-family:var(--mono); font-size:11px; transition:all 0.2s; flex-shrink:0;
+}
+#person-name-edit-btn:hover { border-color:var(--accent); color:var(--accent); }
+
+#person-photos {
+  flex:1; overflow-y:auto; padding:20px 32px;
+}
+#person-photos-grid {
+  display:grid; grid-template-columns:repeat(auto-fill, minmax(160px, 1fr)); gap:10px;
+}
+
+/* ── Loading / toasts ── */
+#loading {
+  position:fixed; inset:0; z-index:999; background:var(--bg);
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap:16px;
+}
+#loading.hidden { display:none; }
+.loading-aperture {
+  width:48px; height:48px; border-radius:50%;
+  border:2px solid var(--border); border-top-color:var(--accent);
+  animation:spin 1s linear infinite;
+}
+@keyframes spin { to { transform:rotate(360deg); } }
+#loading p { font-family:var(--mono); font-size:12px; color:var(--text-dim); }
+
+#toast {
+  position:fixed; bottom:24px; left:50%; transform:translateX(-50%) translateY(80px);
+  background:var(--surface); border:1px solid var(--border); border-radius:10px;
+  padding:10px 20px; font-size:13px; color:var(--text);
+  box-shadow:var(--shadow); z-index:900; transition:transform 0.3s;
+}
+#toast.show { transform:translateX(-50%) translateY(0); }
+
+/* ── Name dialog ── */
+#name-dialog {
+  position:fixed; inset:0; z-index:600; display:none;
+  align-items:center; justify-content:center; background:rgba(12,11,9,0.8);
+}
+#name-dialog.open { display:flex; }
+#name-dialog-box {
+  background:var(--surface); border:1px solid var(--border); border-radius:14px;
+  padding:28px; width:340px; box-shadow:var(--shadow);
+}
+#name-dialog-box h3 {
+  font-family:var(--serif); font-size:18px; font-style:italic;
+  color:var(--text); margin-bottom:16px;
+}
+#name-dialog-input {
+  width:100%; padding:10px 14px; border-radius:8px;
+  border:1px solid var(--border); background:var(--bg2);
+  color:var(--text); font-family:var(--serif); font-size:16px;
+  font-style:italic; outline:none; margin-bottom:16px;
+  transition:border-color 0.2s;
+}
+#name-dialog-input:focus { border-color:var(--accent); }
+#name-dialog-actions { display:flex; gap:8px; }
+</style>
+</head>
+<body>
+
+<!-- Loading -->
+<div id="loading">
+  <div class="loading-aperture"></div>
+  <p>developing your archive...</p>
+</div>
+
+<!-- Top bar -->
+<div id="top-bar">
+  <div class="logo">
+    <div class="logo-aperture"></div>
+    Open Photo <span style="font-size:13px;font-family:monospace;font-weight:bold;color:#f5c842;background:#3a2e00;padding:1px 6px;border-radius:4px;align-self:center;margin-left:2px;">v4.23</span>
+  </div>
+  <div id="nav-tabs">
+    <!--<button class="nav-tab" data-view="scatter">scatter</button>-->
+    <button class="nav-tab active" data-view="poincare">poincaré</button>
+  </div>
+  <button id="search-btn" title="Search (/)">⌕</button>
+  <div id="stats-chip"><span style="width:6px;height:6px;border-radius:50%;background:var(--accent);display:inline-block;box-shadow:0 0 6px var(--accent)"></span><span id="stats-text">—</span></div>
+  <div id="count-chips">
+    <button class="count-chip active" data-limit="100">100</button>
+    <button class="count-chip" data-limit="300">300</button>
+    <button class="count-chip" data-limit="900">900</button>
+    <button class="count-chip" data-limit="2700">2.7k</button>
+    <button class="count-chip" data-limit="9999">max</button>
+  </div>
+  <button id="pd-jump-btn" style="display:none;font-family:var(--mono);font-size:10px;padding:4px 10px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;white-space:nowrap;margin-left:4px;" title="Jump to random photo">jump</button>
+  <button id="pd-demo-btn" style="display:none;font-family:var(--mono);font-size:10px;padding:4px 10px;border:1px solid rgba(255,255,255,0.2);border-radius:6px;background:transparent;color:var(--text-dim);cursor:pointer;white-space:nowrap;margin-left:4px;" title="Demo mode">demo</button>
+  <div id="pd-force-wrap" style="display:none">
+    <div class="pd-slider-row">
+      <span id="pd-force-label">force</span>
+      <input type="range" id="pd-force-slider" min="0.1" max="1.0" step="0.05" value="0.3">
+    </div>
+    <div class="pd-slider-row">
+      <span id="pd-sim-label">similarity</span>
+      <input type="range" id="pd-sim-slider" min="0.0" max="1.0" step="0.005" value="0.83">
+    </div><div style="display:flex;align-items:center;gap:4px">
+      <span style="font-family:var(--mono);font-size:10px;color:var(--text-dim);white-space:nowrap;width:52px;">zoom</span>
+      <input type="range" id="pd-zoom-slider" min="0.3" max="2.0" step="0.05" value="1.3" style="width:216px;height:14px;cursor:pointer;accent-color:#d4a853;">
+    </div>
+  </div>
+</div>
+
+<!-- Views -->
+<div id="views">
+
+  <!-- People -->
+  <div class="view active" id="view-people">
+    <div id="people-header">
+      <h1>People</h1>
+      <p id="people-subtitle">Loading...</p>
+    </div>
+    <div id="people-grid"></div>
+  </div>
+
+  <!-- Gallery -->
+  <div class="view" id="view-gallery">
+    <div id="gallery-toolbar">
+      <button class="filter-pill active" data-type="all">all</button>
+      <button class="filter-pill" data-type="photo">photos</button>
+      <button class="filter-pill" data-type="video">videos</button>
+      <select id="year-select"><option value="">all years</option></select>
+    </div>
+    <div id="gallery-grid"></div>
+    <div id="gallery-load-more" style="display:none">
+      <button class="load-more-btn" id="gallery-more-btn">load more</button>
+    </div>
+  </div>
+
+  <!-- Timeline -->
+  <div class="view" id="view-timeline">
+    <div id="timeline-scrubber">
+      <div id="timeline-years"></div>
+      <div id="timeline-months"></div>
+    </div>
+    <div id="timeline-content"></div>
+  </div>
+
+  <!-- Scatter (PCA similarity map) -->
+  <div class="view" id="view-scatter">
+    <div class="scatter-loading" id="scatter-loading"><div class="spinner"></div><div>loading…</div></div>
+    <div id="scatter-field"></div>
+
+    <div id="scatter-tooltip"></div>
+  </div>
+
+  <!-- Poincaré disk -->
+  <div class="view" id="view-poincare">
+    <div class="pd-loading" id="pd-loading"><div class="spinner"></div><div>loading…</div></div>
+    <div id="pd-empty" style="display:none">Tap any photo in scatter to explore</div>
+    <svg id="pd-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+    <canvas id="pd-gl-canvas"></canvas>
+    <div id="pd-nav">
+      <button class="pd-nav-btn" id="pd-back" disabled>← back</button>
+      <div id="pd-breadcrumb"></div>
+    </div>
+    <div id="pd-stats" style="position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:11;display:none;gap:14px;align-items:center;font-family:var(--mono);font-size:11px;color:var(--text-dim);pointer-events:none;background:rgba(10,10,15,0.6);padding:3px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.08);">
+      <span id="pd-stat-nodes">0 nodes</span>
+      <span style="opacity:0.3">·</span>
+      <span id="pd-stat-fps">-- fps</span>
+    </div>
+    <div id="pd-detail">
+      <div id="pd-detail-img"></div>
+      <div id="pd-detail-info">
+        <div id="pd-detail-date"></div>
+        <div id="pd-detail-label"></div>
+        <div id="pd-detail-caption"></div>
+        <button id="pd-detail-full-btn">view full</button>
+      </div>
+      <button id="pd-detail-close">×</button>
+    </div>
+    <div id="pd-tooltip"></div>
+  </div>
+
+  <!-- Map -->
+  <div class="view" id="view-map">
+    <div id="map-container">
+      <div id="leaflet-map"></div>
+    </div>
+    <div id="map-popup-overlay">
+      <img id="map-popup-img" src="" alt="">
+      <div id="map-popup-title"></div>
+      <div id="map-popup-info"></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Search overlay -->
+<div id="search-overlay">
+  <div id="search-bar">
+    <div id="search-input-wrap">
+      <span id="search-icon">⌕</span>
+      <input id="search-input" type="text" placeholder="two women dancing at a party...">
+      <button id="search-close">×</button>
+    </div>
+    <div id="search-mode-tabs">
+      <button class="search-mode-tab active" data-mode="semantic">visual meaning</button>
+      <button class="search-mode-tab" data-mode="fts">keywords</button>
+      <button class="search-mode-tab" data-mode="combined">both</button>
+    </div>
+  </div>
+  <div id="search-results">
+    <div id="search-empty">type to search your archive</div>
+    <div id="search-results-grid" style="display:none"></div>
+  </div>
+</div>
+
+<!-- Detail panel -->
+<div id="detail-panel">
+  <div id="detail-close">
+    <span id="detail-title">photo detail</span>
+    <button id="detail-close-btn">×</button>
+  </div>
+  <div id="detail-img-wrap">
+    <div id="detail-img"></div>
+  </div>
+  <div id="detail-body">
+    <div id="detail-caption"></div>
+    <div id="detail-meta"></div>
+    <div id="detail-faces-section" style="display:none">
+      <div class="section-title">people</div>
+      <div id="detail-faces-list"></div>
+    </div>
+    <div id="detail-similar">
+      <div class="section-title">similar photos</div>
+      <div id="detail-similar-grid"></div>
+    </div>
+  </div>
+  <div id="detail-actions">
+    <button class="action-btn" id="detail-find-similar-btn">find similar</button>
+    <button class="action-btn primary" id="detail-promote-btn">keep</button>
+  </div>
+</div>
+
+<!-- Person panel -->
+<div id="person-panel">
+  <div id="person-header">
+    <button id="person-back">←</button>
+    <img id="person-face-big" src="" alt="">
+    <div id="person-name-wrap">
+      <div id="person-name-display"></div>
+      <input id="person-name-input" type="text" placeholder="name this person...">
+      <div id="person-count"></div>
+    </div>
+    <button id="person-name-edit-btn">name</button>
+  </div>
+  <div id="person-photos">
+    <div id="person-photos-grid"></div>
+  </div>
+</div>
+
+<!-- Name dialog (from detail panel face chips) -->
+<div id="name-dialog">
+  <div id="name-dialog-box">
+    <h3>Name this person</h3>
+    <input id="name-dialog-input" type="text" placeholder="e.g. Sarah">
+    <div id="name-dialog-actions">
+      <button class="action-btn" id="name-dialog-cancel">cancel</button>
+      <button class="action-btn primary" id="name-dialog-save">save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<script>
+// ─────────────────────────────────────────────
+// Config
+// ─────────────────────────────────────────────
+const API = '';  // same origin
+
+// ─────────────────────────────────────────────
+// State
+// ─────────────────────────────────────────────
+let _currentView   = 'poincare';
+let _searchMode    = 'semantic';
+let _searchTimer   = null;
+let _galleryOffset = 0;
+let _galleryType   = 'all';
+let _galleryYear   = '';
+let _timelineYear  = null;
+let _timelineMonth = null;
+let _timelineYears = [];
+let _currentMediaId = null;
+let _currentClusterId = null;
+let _nameDialogClusterId = null;
+let _mapInstance   = null;
+let _mapInitialized = false;
+
+// ─────────────────────────────────────────────
+// Utils
+// ─────────────────────────────────────────────
+const $  = id => document.getElementById(id);
+const el = (tag, cls, html) => {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (html) e.innerHTML = html;
+  return e;
+};
+
+async function api(path, opts={}) {
+  const r = await fetch(API + path, opts);
+  if (!r.ok) throw new Error(`${r.status} ${path}`);
+  return r.json();
+}
+
+function toast(msg, dur=2500) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), dur);
+}
+
+function thumbUrl(path) {
+  if (!path) return '';
+  return `${API}/uploads/${path}`;
+}
+
+function formatDate(iso) {
+  if (!iso) return '—';
+  try {
+    return new Date(iso).toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
+  } catch { return iso.slice(0,10); }
+}
+
+function formatDateShort(iso) {
+  if (!iso) return '';
+  try {
+    return new Date(iso).toLocaleDateString('en-US', { month:'short', day:'numeric' });
+  } catch { return iso.slice(5,10); }
+}
+
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+// ─────────────────────────────────────────────
+// Navigation
+// ─────────────────────────────────────────────
+document.querySelectorAll('.nav-tab').forEach(btn => {
+  btn.addEventListener('click', () => switchView(btn.dataset.view));
+});
+
+function switchView(name) {
+  _currentView = name;
+  document.querySelectorAll('.nav-tab').forEach(b => b.classList.toggle('active', b.dataset.view === name));
+  document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === `view-${name}`));
+  document.body.classList.toggle('immersive', name === 'scatter' || name === 'poincare');
+  $('count-chips').style.display = (name === 'scatter' || name === 'poincare') ? '' : 'none';
+  $('pd-jump-btn').style.display = (name === 'poincare') ? '' : 'none';
+  $('pd-demo-btn').style.display = (name === 'poincare') ? '' : 'none';
+  $('pd-force-wrap').style.display = (name === 'poincare') ? 'flex' : 'none';
+  const statsBar = $('pd-stats'); if (statsBar) statsBar.style.display = (name === 'poincare') ? 'flex' : 'none';
+  closeDetail();
+  closePersonPanel();
+  if (name === 'map' && !_mapInitialized) initMap();
+  if (name === 'timeline' && _timelineYears.length) loadTimeline();
+  if (name === 'gallery') loadGallery(true);
+  if (name === 'scatter' && !_scatterLoaded) initScatter();
+  if (name === 'poincare' && !_pdInitialized) initPoincareView();
+}
+
+// ─────────────────────────────────────────────
+// Stats
+// ─────────────────────────────────────────────
+async function loadStats() {
+  try {
+    const s = await api('/api/stats');
+    $('stats-text').textContent = `${s.total.toLocaleString()} photos`;
+  } catch {}
+}
+
+// ─────────────────────────────────────────────
+// People view
+// ─────────────────────────────────────────────
+async function loadPeople() {
+  try {
+    const data = await api('/api/people?limit=200');
+    const grid = $('people-grid');
+    grid.innerHTML = '';
+    $('people-subtitle').textContent =
+      `${data.total} people detected · ${data.people.filter(p=>p.person_name).length} named`;
+
+    data.people.forEach(person => {
+      const card = el('div', 'person-card');
+      const name = person.person_name || person.anonymous_label;
+      const isNamed = !!person.person_name;
+
+      if (person.cover_thumb) {
+        const img = el('img', 'face-img');
+        img.src = thumbUrl(person.cover_thumb);
+        img.alt = name;
+        card.appendChild(img);
+      } else {
+        card.appendChild(el('div', 'face-placeholder', '👤'));
+      }
+
+      const info = el('div', 'person-card-info');
+      info.innerHTML = `
+        <div class="person-card-name ${isNamed ? '' : 'person-card-unnamed'}">${name}</div>
+        <div class="person-card-count">${person.face_count.toLocaleString()} photos</div>
+      `;
+      card.appendChild(info);
+      card.addEventListener('click', () => openPersonPanel(person));
+      grid.appendChild(card);
+    });
+  } catch(e) {
+    console.error(e);
+  }
+}
+
+// ─────────────────────────────────────────────
+// Person panel
+// ─────────────────────────────────────────────
+let _editingName = false;
+
+async function openPersonPanel(person) {
+  _currentClusterId = person.id;
+  const panel = $('person-panel');
+  panel.classList.add('open');
+
+  $('person-face-big').src = person.cover_thumb ? thumbUrl(person.cover_thumb) : '';
+  const nameDisplay = $('person-name-display');
+  const nameInput   = $('person-name-input');
+  nameDisplay.textContent = person.person_name || person.anonymous_label;
+  nameInput.value = person.person_name || '';
+  $('person-count').textContent = `${person.face_count.toLocaleString()} photos`;
+
+  nameDisplay.style.display = '';
+  nameInput.style.display = 'none';
+  $('person-name-edit-btn').textContent = 'name';
+  _editingName = false;
+
+  const data = await api(`/api/people/${person.id}/photos?limit=200`);
+  const grid = $('person-photos-grid');
+  grid.innerHTML = '';
+
+  data.photos.forEach(photo => {
+    const item = el('div', 'gallery-item');
+    const img = el('img');
+    img.src = thumbUrl(photo.thumbnail_path);
+    img.alt = photo.label;
+    img.loading = 'lazy';
+    item.appendChild(img);
+    item.addEventListener('click', () => openDetail(photo.id));
+    grid.appendChild(item);
+  });
+}
+
+function closePersonPanel() {
+  $('person-panel').classList.remove('open');
+  _currentClusterId = null;
+}
+
+$('person-back').addEventListener('click', closePersonPanel);
+
+$('person-name-edit-btn').addEventListener('click', async () => {
+  const nameDisplay = $('person-name-display');
+  const nameInput   = $('person-name-input');
+  const btn = $('person-name-edit-btn');
+
+  if (!_editingName) {
+    nameDisplay.style.display = 'none';
+    nameInput.style.display = '';
+    nameInput.focus();
+    btn.textContent = 'save';
+    _editingName = true;
+  } else {
+    const newName = nameInput.value.trim();
+    if (newName && _currentClusterId) {
+      await api(`/api/people/${_currentClusterId}`, {
+        method:'PATCH',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({person_name: newName})
+      });
+      nameDisplay.textContent = newName;
+      toast(`Named "${newName}"`);
+      loadPeople();
+    }
+    nameDisplay.style.display = '';
+    nameInput.style.display = 'none';
+    btn.textContent = 'name';
+    _editingName = false;
+  }
+});
+
+// ─────────────────────────────────────────────
+// Gallery view
+// ─────────────────────────────────────────────
+async function loadGallery(reset=false) {
+  if (reset) {
+    _galleryOffset = 0;
+    $('gallery-grid').innerHTML = '';
+    $('gallery-load-more').style.display = 'none';
+  }
+
+  let url = `/api/timeline?limit=80&offset=${_galleryOffset}`;
+  if (_galleryType !== 'all') url += `&media_type=${_galleryType}`;
+  if (_galleryYear) url += `&from=${_galleryYear}-01-01&to=${_galleryYear}-12-31`;
+
+  try {
+    const data = await api(url);
+    const grid = $('gallery-grid');
+
+    data.items.forEach(item => {
+      const div = el('div', 'gallery-item');
+      const img = el('img');
+      img.src = thumbUrl(item.thumbnail_path);
+      img.alt = item.label;
+      img.loading = 'lazy';
+      div.appendChild(img);
+
+      if (item.media_type === 'video') {
+        div.appendChild(el('div', 'gallery-item-video-badge', '▶ video'));
+      }
+
+      const overlay = el('div', 'gallery-item-overlay');
+      overlay.innerHTML = `
+        <div class="gallery-item-date">${formatDateShort(item.taken_at)}</div>
+        <div class="gallery-item-caption">${item.label || ''}</div>
+      `;
+      div.appendChild(overlay);
+      div.addEventListener('click', () => openDetail(item.id));
+      grid.appendChild(div);
+    });
+
+    _galleryOffset += data.items.length;
+    const hasMore = _galleryOffset < data.total;
+    $('gallery-load-more').style.display = hasMore ? 'block' : 'none';
+  } catch(e) { console.error(e); }
+}
+
+document.querySelectorAll('.filter-pill').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.filter-pill').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    _galleryType = btn.dataset.type;
+    loadGallery(true);
+  });
+});
+
+$('year-select').addEventListener('change', e => {
+  _galleryYear = e.target.value;
+  loadGallery(true);
+});
+
+$('gallery-more-btn').addEventListener('click', () => loadGallery(false));
+
+async function populateYearSelect() {
+  try {
+    const years = await api('/api/timeline/years');
+    const sel = $('year-select');
+    const uniqueYears = [...new Set(years.map(r => r.year))];
+    uniqueYears.forEach(y => {
+      const opt = document.createElement('option');
+      opt.value = y; opt.textContent = y;
+      sel.appendChild(opt);
+    });
+    _timelineYears = years;
+  } catch {}
+}
+
+// ─────────────────────────────────────────────
+// Timeline view
+// ─────────────────────────────────────────────
+function buildTimelineScrubber() {
+  const yearsEl  = $('timeline-years');
+  yearsEl.innerHTML = '';
+
+  const grouped = {};
+  _timelineYears.forEach(r => {
+    if (!grouped[r.year]) grouped[r.year] = {};
+    grouped[r.year][r.month] = r.count;
+  });
+
+  const sortedYears = Object.keys(grouped).sort((a,b) => b-a);
+
+  sortedYears.forEach((year, i) => {
+    const total = Object.values(grouped[year]).reduce((a,b)=>a+b, 0);
+    const block = el('div', 'year-block');
+    block.innerHTML = `${year}<span class="year-count">${total.toLocaleString()}</span>`;
+    if (i === 0) {
+      block.classList.add('active');
+      _timelineYear = year;
+    }
+    block.addEventListener('click', () => {
+      document.querySelectorAll('.year-block').forEach(b => b.classList.remove('active'));
+      block.classList.add('active');
+      _timelineYear = year;
+      _timelineMonth = null;
+      buildMonthChips(grouped[year]);
+      loadTimeline();
+    });
+    yearsEl.appendChild(block);
+  });
+
+  if (sortedYears[0]) buildMonthChips(grouped[sortedYears[0]]);
+}
+
+function buildMonthChips(monthData) {
+  const el2 = $('timeline-months');
+  el2.innerHTML = '';
+  const allChip = el('button', 'month-chip active', 'all');
+  allChip.addEventListener('click', () => {
+    document.querySelectorAll('.month-chip').forEach(b => b.classList.remove('active'));
+    allChip.classList.add('active');
+    _timelineMonth = null;
+    loadTimeline();
+  });
+  el2.appendChild(allChip);
+
+  Object.keys(monthData).sort().forEach(m => {
+    const chip = el('button', 'month-chip', MONTHS[parseInt(m)-1]);
+    chip.addEventListener('click', () => {
+      document.querySelectorAll('.month-chip').forEach(b => b.classList.remove('active'));
+      chip.classList.add('active');
+      _timelineMonth = m;
+      loadTimeline();
+    });
+    el2.appendChild(chip);
+  });
+}
+
+async function loadTimeline() {
+  if (!_timelineYear) return;
+  const content = $('timeline-content');
+  content.innerHTML = '<div style="font-family:var(--mono);font-size:12px;color:var(--text-muted);padding:20px">loading...</div>';
+
+  let from = `${_timelineYear}-01-01`;
+  let to   = `${_timelineYear}-12-31`;
+  if (_timelineMonth) {
+    const m = _timelineMonth.padStart(2,'0');
+    const lastDay = new Date(_timelineYear, parseInt(_timelineMonth), 0).getDate();
+    from = `${_timelineYear}-${m}-01`;
+    to   = `${_timelineYear}-${m}-${lastDay}`;
+  }
+
+  try {
+    const data = await api(`/api/timeline?from=${from}&to=${to}&limit=500`);
+    content.innerHTML = '';
+
+    const byDay = {};
+    data.items.forEach(item => {
+      const day = item.taken_at ? item.taken_at.slice(0,10) : 'unknown';
+      if (!byDay[day]) byDay[day] = [];
+      byDay[day].push(item);
+    });
+
+    Object.keys(byDay).sort().reverse().forEach(day => {
+      const group = el('div', 'timeline-day');
+      const label = el('div', 'timeline-day-label', formatDate(day));
+      const photos = el('div', 'timeline-day-photos');
+      byDay[day].forEach(item => {
+        const img = el('img', 'timeline-thumb');
+        img.src = thumbUrl(item.thumbnail_path);
+        img.alt = item.label;
+        img.loading = 'lazy';
+        img.addEventListener('click', () => openDetail(item.id));
+        photos.appendChild(img);
+      });
+      group.appendChild(label);
+      group.appendChild(photos);
+      content.appendChild(group);
+    });
+
+    if (data.items.length === 0) {
+      content.innerHTML = '<div style="font-family:var(--serif);font-size:16px;font-style:italic;color:var(--text-dim);padding:40px;text-align:center">nothing here</div>';
+    }
+  } catch(e) { console.error(e); }
+}
+
+// ─────────────────────────────────────────────
+// Map view
+// ─────────────────────────────────────────────
+async function initMap() {
+  _mapInitialized = true;
+  const map = L.map('leaflet-map', {
+    center:[20,0], zoom:2,
+    attributionControl:false,
+  });
+  _mapInstance = map;
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom:19, attribution:'© OpenStreetMap'
+  }).addTo(map);
+
+  try {
+    const data = await api('/api/map');
+    if (!data.items.length) return;
+
+    const markers = [];
+    data.items.forEach(item => {
+      if (!item.geo_lat || !item.geo_lon) return;
+      const marker = L.circleMarker([item.geo_lat, item.geo_lon], {
+        radius:6, fillColor:'#d4a853', fillOpacity:0.8,
+        color:'#0c0b09', weight:1.5,
+      }).addTo(map);
+      marker.on('click', () => showMapPopup(item));
+      markers.push(marker);
+    });
+
+    if (markers.length) {
+      const group = L.featureGroup(markers);
+      map.fitBounds(group.getBounds(), {padding:[40,40]});
+    }
+  } catch(e) { console.error(e); }
+}
+
+function showMapPopup(item) {
+  const overlay = $('map-popup-overlay');
+  $('map-popup-img').src = thumbUrl(item.thumbnail_path);
+  $('map-popup-title').textContent = item.label || '';
+  $('map-popup-info').textContent = [item.geo_name, formatDateShort(item.taken_at)].filter(Boolean).join(' · ');
+  overlay.classList.add('visible');
+  overlay.style.cursor = 'pointer';
+  overlay.onclick = () => openDetail(item.id);
+}
+
+// ─────────────────────────────────────────────
+// Detail panel
+// ─────────────────────────────────────────────
+async function openDetail(mediaId) {
+  _currentMediaId = mediaId;
+  const panel = $('detail-panel');
+  panel.classList.add('open');
+
+  $('detail-img').src = '';
+  $('detail-caption').textContent = '';
+  $('detail-meta').innerHTML = '';
+  $('detail-faces-section').style.display = 'none';
+  $('detail-similar-grid').innerHTML = '';
+
+  try {
+    const data = await api(`/api/media/${mediaId}`);
+
+    $('detail-img').style.backgroundImage = `url(${thumbUrl(data.thumbnail_path)})`;
+    $('detail-title').textContent = formatDateShort(data.taken_at) || data.label || 'photo';
+
+    if (data.caption) {
+      $('detail-caption').textContent = data.caption;
+      $('detail-caption').style.display = '';
+    } else {
+      $('detail-caption').style.display = 'none';
+    }
+
+    const meta = [
+      ['date',   formatDate(data.taken_at)],
+      ['album',  data.album || '—'],
+      ['camera', [data.camera_make, data.camera_model].filter(Boolean).join(' ') || '—'],
+      ['size',   data.width ? `${data.width}×${data.height}` : '—'],
+      ['location', data.geo_name || (data.geo_lat ? `${data.geo_lat.toFixed(3)}, ${data.geo_lon.toFixed(3)}` : '—')],
+      ['type',   data.media_type || '—'],
+    ];
+    $('detail-meta').innerHTML = meta.map(([label,val]) => `
+      <div class="meta-item">
+        <div class="meta-label">${label}</div>
+        <div class="meta-value">${val}</div>
+      </div>
+    `).join('');
+
+    const faces = (data.faces || []).filter(f => !f.is_noise);
+    if (faces.length) {
+      $('detail-faces-section').style.display = '';
+      const list = $('detail-faces-list');
+      list.innerHTML = '';
+      faces.forEach(face => {
+        const chip = el('div', 'face-chip');
+        chip.innerHTML = `
+          <img class="face-chip-thumb" src="" alt="">
+          <span class="${face.person_name ? 'face-chip-name' : 'face-chip-anon'}">
+            ${face.person_name || face.anonymous_label || 'unknown'}
+          </span>
+        `;
+        chip.addEventListener('click', () => {
+          if (face.cluster_id) openNameDialog(face.cluster_id, face.person_name || face.anonymous_label);
+        });
+        list.appendChild(chip);
+      });
+    }
+
+    loadSimilar(mediaId);
+    $('detail-promote-btn').textContent = data.status === 'permanent' ? 'kept ✓' : 'keep';
+
+  } catch(e) { console.error(e); }
+}
+
+async function loadSimilar(mediaId) {
+  try {
+    const data = await api(`/api/similar/${mediaId}?limit=8`);
+    const grid = $('detail-similar-grid');
+    grid.innerHTML = '';
+    data.results.forEach(item => {
+      const div = el('div', 'similar-thumb');
+      if (item.thumbnail_path) div.style.backgroundImage = `url(${thumbUrl(item.thumbnail_path)})`;
+      div.style.backgroundSize = 'cover';
+      div.style.backgroundPosition = 'center';
+      div.addEventListener('click', () => openDetail(item.id));
+      grid.appendChild(div);
+    });
+  } catch {}
+}
+
+function closeDetail() {
+  $('detail-panel').classList.remove('open');
+  _currentMediaId = null;
+}
+
+$('detail-close-btn').addEventListener('click', closeDetail);
+
+$('detail-promote-btn').addEventListener('click', async () => {
+  if (!_currentMediaId) return;
+  await api(`/api/media/${_currentMediaId}`, {
+    method:'PATCH',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({status:'permanent'})
+  });
+  $('detail-promote-btn').textContent = 'kept ✓';
+  toast('Photo kept');
+});
+
+$('detail-find-similar-btn').addEventListener('click', () => {
+  if (!_currentMediaId) return;
+  closeDetail();
+  openSearchWith(_currentMediaId);
+});
+
+// ─────────────────────────────────────────────
+// Search
+// ─────────────────────────────────────────────
+$('search-btn').addEventListener('click', openSearch);
+$('search-close').addEventListener('click', closeSearch);
+
+// Arrow key panning in Poincaré view
+const _arrowKeys = new Set();
+let _arrowRAF = null;
+function _pdArrowTick() {
+  if (!_arrowKeys.size) { _arrowRAF = null; return; }
+  const step = 9;
+  let dx = 0, dy = 0;
+  if (_arrowKeys.has('ArrowUp'))    dy = -step;
+  if (_arrowKeys.has('ArrowDown'))  dy =  step;
+  if (_arrowKeys.has('ArrowLeft'))  dx = -step;
+  if (_arrowKeys.has('ArrowRight')) dx =  step;
+  if (dx || dy) {
+    if (!pdState.animRAF) {
+      const {diskCx:cx,diskCy:cy,diskR:R,diskW:W,diskH:H} = pdState;
+      if (R) {
+        const scale = 0.8/R;
+        let a = [dx*scale, dy*scale];
+        const aLen = Math.hypot(a[0],a[1]); if (aLen > 0.9) { a[0]*=.9/aLen; a[1]*=.9/aLen; }
+        const np = new Map();
+        for (const [id,pos] of pdState.positions) np.set(id, mobiusTransform(pos, a));
+        pdState.positions = np;
+        pdGLRender(pdState.positions, cx, cy, R, W, H);
+      }
+    }
+  }
+  _arrowRAF = requestAnimationFrame(_pdArrowTick);
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key === '/' && !e.target.matches('input,textarea')) {
+    e.preventDefault(); openSearch();
+  }
+  if (e.key === 'Escape') {
+    // Close any open panels first; if nothing to close and in poincare, go back
+    const anyOpen = $('search-overlay').classList.contains('visible') ||
+                    $('pd-detail').classList.contains('open') ||
+                    $('detail-panel').classList.contains('open') ||
+                    $('person-panel').classList.contains('open');
+    if (anyOpen) {
+      closeSearch(); closeDetail(); closePersonPanel();
+    } else if (_currentView === 'poincare' && pdHistory.length) {
+      pdGoBack();
+    }
+  }
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key) &&
+      _currentView === 'poincare' && !e.target.matches('input,textarea')) {
+    e.preventDefault();
+    _arrowKeys.add(e.key);
+    if (!_arrowRAF) _arrowRAF = requestAnimationFrame(_pdArrowTick);
+  }
+});
+
+document.addEventListener('keyup', e => {
+  _arrowKeys.delete(e.key);
+});
+
+document.querySelectorAll('.search-mode-tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.search-mode-tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    _searchMode = btn.dataset.mode;
+    const q = $('search-input').value.trim();
+    if (q) doSearch(q);
+  });
+});
+
+$('search-input').addEventListener('input', e => {
+  clearTimeout(_searchTimer);
+  const q = e.target.value.trim();
+  if (!q) {
+    $('search-empty').style.display = '';
+    $('search-results-grid').style.display = 'none';
+    return;
+  }
+  _searchTimer = setTimeout(() => doSearch(q), 400);
+});
+
+function openSearch() {
+  $('search-overlay').classList.add('visible');
+  setTimeout(() => $('search-input').focus(), 50);
+}
+
+function closeSearch() {
+  $('search-overlay').classList.remove('visible');
+  $('search-input').value = '';
+  $('search-empty').style.display = '';
+  $('search-results-grid').style.display = 'none';
+}
+
+async function openSearchWith(mediaId) {
+  openSearch();
+  $('search-input').value = 'similar to selected photo';
+  try {
+    const data = await api(`/api/similar/${mediaId}?limit=50`);
+    renderSearchResults(data.results);
+  } catch {}
+}
+
+async function doSearch(q) {
+  try {
+    const data = await api(`/api/search?q=${encodeURIComponent(q)}&mode=${_searchMode}&limit=60`);
+    renderSearchResults(data.results);
+  } catch(e) { console.error(e); }
+}
+
+function renderSearchResults(results) {
+  const grid = $('search-results-grid');
+  $('search-empty').style.display = results.length ? 'none' : '';
+  grid.style.display = results.length ? 'grid' : 'none';
+  grid.innerHTML = '';
+
+  results.forEach(item => {
+    const div = el('div', 'search-result-item');
+    div.innerHTML = `
+      <img src="${thumbUrl(item.thumbnail_path)}" alt="${item.label || ''}" loading="lazy">
+      ${item.score ? `<div class="search-result-score">${(item.score*100).toFixed(0)}%</div>` : ''}
+      <div class="search-result-caption">${item.caption || item.label || ''}</div>
+    `;
+    div.addEventListener('click', () => {
+      closeSearch();
+      openDetail(item.id);
+    });
+    grid.appendChild(div);
+  });
+}
+
+// ─────────────────────────────────────────────
+// Name dialog
+// ─────────────────────────────────────────────
+function openNameDialog(clusterId, currentName) {
+  _nameDialogClusterId = clusterId;
+  $('name-dialog-input').value = currentName && !currentName.startsWith('Person ') ? currentName : '';
+  $('name-dialog').classList.add('open');
+  setTimeout(() => $('name-dialog-input').focus(), 50);
+}
+
+$('name-dialog-cancel').addEventListener('click', () => $('name-dialog').classList.remove('open'));
+$('name-dialog-save').addEventListener('click', async () => {
+  const name = $('name-dialog-input').value.trim();
+  if (!name || !_nameDialogClusterId) return;
+  await api(`/api/people/${_nameDialogClusterId}`, {
+    method:'PATCH',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({person_name:name})
+  });
+  $('name-dialog').classList.remove('open');
+  toast(`Named "${name}"`);
+  loadPeople();
+  if (_currentMediaId) openDetail(_currentMediaId);
+});
+
+$('name-dialog-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') $('name-dialog-save').click();
+  if (e.key === 'Escape') $('name-dialog').classList.remove('open');
+});
+
+// ─────────────────────────────────────────────
+// Init
+// ─────────────────────────────────────────────
+async function init() {
+  await loadStats();
+  _initScatterChips(); // register chip handlers at startup, not inside scatter init
+  $('loading').classList.add('hidden');
+  switchView('poincare');
+}
+
+init();
+
+// ══════════════════════════════════════════════
+// SCATTER VIEW  (DOM-based — browser handles image loading)
+// ══════════════════════════════════════════════
+const SCATTER_TILE = 48;
+let _scatterLoaded = false;
+let _scatterNodes  = [];
+// Split camera: input writes to target, rAF loop lerps cam toward it
+let _scatterTarget = { x: 0, y: 0, k: 1 };   // what we want
+let _scatterCam    = { x: 0, y: 0, k: 1 };   // what's rendered (lerps toward target)
+let _scatterTx     = _scatterCam;             // alias for compat
+let _scatterW = 0, _scatterH = 0;
+let _scatterLimit  = 100;
+let _scatterEventsInit = false;
+let _scatterLoopRunning = false;
+const CAM_LERP = 0.15;  // 0 = frozen, 1 = instant snap
+
+async function initScatter(limit) {
+  if (limit != null) _scatterLimit = limit;
+  $('scatter-loading').style.display = 'flex';
+  try {
+    const [layoutData, photosData] = await Promise.all([
+      api(`/api/embedding-layout?limit=${_scatterLimit}`), api('/api/photos')
+    ]);
+    const nodeMap = {};
+    for (const n of photosData.nodes) nodeMap[n.id] = n;
+    const pos = layoutData.positions;
+    const WORLD = 1000;
+    _scatterNodes = Object.entries(pos).map(([id,[nx,ny]]) => {
+      const n = nodeMap[id] || {};
+      return {
+        id,
+        wx: nx * WORLD,
+        wy: ny * WORLD,
+        caption: (n.caption || n.label || '').slice(0, 80),
+        date: (n.taken_at || '').slice(0, 7),
+        thumb: n.thumbnail_path ? thumbUrl(n.thumbnail_path) : null,
+      };
+    });
+    _scatterLoaded = true;
+    $('scatter-loading').style.display = 'none';
+
+    // Build DOM tiles as divs with background-image + staggered fade-in
+    const field = $('scatter-field');
+    field.innerHTML = '';
+    _scatterNodes.forEach((node, i) => {
+      const el = document.createElement('div');
+      el.className = 'scatter-tile';
+      if (node.thumb) el.style.backgroundImage = `url(${node.thumb})`;
+      el.style.left = node.wx + 'px';
+      el.style.top  = node.wy + 'px';
+      el.dataset.id = node.id;
+      el.dataset.caption = node.caption;
+      el.dataset.date = node.date || '';
+      field.appendChild(el);
+      node.el = el;
+      // Staggered fade-in
+      setTimeout(() => el.classList.add('loaded'), 30 + i * 8);
+    });
+
+    // Measure container
+    const container = $('view-scatter');
+    _scatterW = container.clientWidth  || window.innerWidth;
+    _scatterH = container.clientHeight || window.innerHeight;
+
+    // Auto-fit (snap=true on first load so it doesn't animate from origin)
+    _autoFitScatter(true);
+    _applyScatterTransform();
+    _startScatterLoop();
+    if (!_scatterEventsInit) { _initScatterEvents(); _scatterEventsInit = true; }
+
+  } catch(e) {
+    $('scatter-loading').style.display = 'none';
+    console.error('Scatter init failed:', e);
+  }
+}
+
+function _initScatterChips() {
+  document.querySelectorAll('.count-chip').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const lim = parseInt(btn.dataset.limit);
+      if (lim === _scatterLimit && _currentView !== 'poincare') return;
+      _scatterLimit = lim;
+      document.querySelectorAll('.count-chip').forEach(b => b.classList.toggle('active', b === btn));
+      _pdEmbLayout = null;
+      _pdSimCache = {};
+      if (_currentView === 'poincare' && pdState.centerId) {
+        const cid = pdState.centerId;
+        (async () => {
+          try {
+            // Reload photos list so new limit nodes are in _pdNodeMap
+            const data = await api('/api/photos');
+            _pdPhotos = data.nodes;
+            _pdPhotos.forEach(n => _pdNodeMap[n.id] = n);
+            _pdEmbLayout = await api(`/api/embedding-layout?limit=${lim}`);
+            await pdComputeLayout(cid);
+            _pdSVGBuilt=false; if(_pdGL) _pdGL._svgBuilt=false;
+            // Rebuild SVG immediately so nodes show before atlas loads
+            renderPoincareGraph();
+            // Load atlas in background, re-render when done
+            const vn=[...pdState.positions.keys()].map(id=>_pdNodeMap[id]).filter(Boolean);
+            pdGLLoadAtlas(vn).then(()=>{
+              _pdSVGBuilt=false; if(_pdGL) _pdGL._svgBuilt=false;
+              renderPoincareGraph();
+            });
+          } catch(e) { console.error('pd chip reload', e); }
+        })();
+      } else {
+        // Reload scatter
+        document.querySelectorAll('.scatter-tile').forEach(t => t.classList.remove('loaded'));
+        setTimeout(() => {
+          _scatterLoaded = false;
+          _scatterLoopRunning = false;
+          initScatter(lim);
+        }, 300);
+      }
+    });
+  });
+}
+
+function _applyScatterTransform() {
+  const field = $('scatter-field');
+  if (!field) return;
+  field.style.transform = `translate(${_scatterCam.x}px, ${_scatterCam.y}px) scale(${_scatterCam.k})`;
+}
+
+// rAF loop: lerps camera toward target, applies transform
+function _startScatterLoop() {
+  if (_scatterLoopRunning) return;
+  _scatterLoopRunning = true;
+  function tick() {
+    if (!_scatterLoaded) { _scatterLoopRunning = false; return; }
+    // Lerp camera toward target
+    const dx = _scatterTarget.x - _scatterCam.x;
+    const dy = _scatterTarget.y - _scatterCam.y;
+    const dk = _scatterTarget.k - _scatterCam.k;
+    if (Math.abs(dx) > 0.1 || Math.abs(dy) > 0.1 || Math.abs(dk) > 0.0001) {
+      _scatterCam.x += dx * CAM_LERP;
+      _scatterCam.y += dy * CAM_LERP;
+      _scatterCam.k += dk * CAM_LERP;
+      _applyScatterTransform();
+    }
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+}
+
+function _autoFitScatter(snap) {
+  if (!_scatterNodes || _scatterNodes.length === 0) return;
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const n of _scatterNodes) {
+    if (n.wx < minX) minX = n.wx;
+    if (n.wx > maxX) maxX = n.wx;
+    if (n.wy < minY) minY = n.wy;
+    if (n.wy > maxY) maxY = n.wy;
+  }
+  if (!isFinite(minX)) return;
+  const dataW = (maxX - minX) + SCATTER_TILE * 2;
+  const dataH = (maxY - minY) + SCATTER_TILE * 2;
+  if (dataW <= 0 || dataH <= 0) return;
+  const pad = 40;
+  const cW = _scatterW || window.innerWidth;
+  const cH = _scatterH || window.innerHeight;
+  const k = Math.min((cW - pad * 2) / dataW, (cH - pad * 2) / dataH, 10);
+  _scatterTarget.k = k;
+  _scatterTarget.x = cW / 2 - ((minX + maxX) / 2) * k;
+  _scatterTarget.y = cH / 2 - ((minY + maxY) / 2) * k;
+  if (snap) {
+    _scatterCam.x = _scatterTarget.x;
+    _scatterCam.y = _scatterTarget.y;
+    _scatterCam.k = _scatterTarget.k;
+  }
+}
+
+function _zoomScatterAt(sx, sy, factor) {
+  const oldK = _scatterTarget.k;
+  const newK = Math.max(0.02, Math.min(oldK * factor, 40));
+  _scatterTarget.x = sx - (sx - _scatterTarget.x) * (newK / oldK);
+  _scatterTarget.y = sy - (sy - _scatterTarget.y) * (newK / oldK);
+  _scatterTarget.k = newK;
+}
+
+function _initScatterEvents() {
+  const container = $('view-scatter');
+  const tip = $('scatter-tooltip');
+  let dragging = false, lastX = 0, lastY = 0;
+  let pinching = false, lastPinchDist = 0;
+
+  // Desktop: wheel zoom
+  container.addEventListener('wheel', e => {
+    e.preventDefault();
+    const r = container.getBoundingClientRect();
+    _zoomScatterAt(e.clientX - r.left, e.clientY - r.top, e.deltaY < 0 ? 1.1 : 1/1.1);
+  }, { passive: false });
+
+  // Desktop: mouse drag
+  container.addEventListener('mousedown', e => {
+    dragging = true; lastX = e.clientX; lastY = e.clientY;
+    container.classList.add('dragging');
+  });
+  window.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    _scatterTarget.x += e.clientX - lastX;
+    _scatterTarget.y += e.clientY - lastY;
+    lastX = e.clientX; lastY = e.clientY;
+  });
+  window.addEventListener('mouseup', () => { dragging = false; container.classList.remove('dragging'); });
+
+  // Touch: pan + pinch-to-zoom
+  container.addEventListener('touchstart', e => {
+    if (e.touches.length === 1) {
+      dragging = true; pinching = false;
+      lastX = e.touches[0].clientX; lastY = e.touches[0].clientY;
+    } else if (e.touches.length === 2) {
+      e.preventDefault(); dragging = false; pinching = true;
+      const t0 = e.touches[0], t1 = e.touches[1];
+      lastPinchDist = Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY);
+    }
+  }, { passive: false });
+
+  container.addEventListener('touchmove', e => {
+    if (e.touches.length === 1 && dragging && !pinching) {
+      const cx = e.touches[0].clientX, cy = e.touches[0].clientY;
+      _scatterTarget.x += cx - lastX; _scatterTarget.y += cy - lastY;
+      lastX = cx; lastY = cy;
+    } else if (e.touches.length === 2) {
+      e.preventDefault();
+      pinching = true; dragging = false;
+      const t0 = e.touches[0], t1 = e.touches[1];
+      const dist = Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY);
+      if (lastPinchDist > 0 && dist > 0) {
+        const r = container.getBoundingClientRect();
+        const midX = (t0.clientX + t1.clientX) / 2 - r.left;
+        const midY = (t0.clientY + t1.clientY) / 2 - r.top;
+        _zoomScatterAt(midX, midY, dist / lastPinchDist);
+      }
+      lastPinchDist = dist;
+    }
+  }, { passive: false });
+
+  container.addEventListener('touchend', e => {
+    if (e.touches.length < 2) { pinching = false; lastPinchDist = 0; }
+    if (e.touches.length === 0) dragging = false;
+    if (e.touches.length === 1) {
+      dragging = true; lastX = e.touches[0].clientX; lastY = e.touches[0].clientY;
+    }
+  });
+
+  // Tap tiles to enter Poincaré
+  container.addEventListener('click', e => {
+    const tile = e.target.closest('.scatter-tile');
+    if (tile && tile.dataset.id) {
+      enterPoincareView(tile.dataset.id);
+    }
+  });
+
+  // Hover tooltip (desktop)
+  container.addEventListener('mouseover', e => {
+    const tile = e.target.closest('.scatter-tile');
+    if (tile) {
+      tip.innerHTML = `<div style="color:var(--accent);font-size:10px;margin-bottom:3px">${tile.dataset.date||''}</div><div>${escHtml(tile.dataset.caption||'')}</div>`;
+      tip.style.display = 'block';
+    }
+  });
+  container.addEventListener('mousemove', e => {
+    if (tip.style.display === 'block') {
+      tip.style.left = (e.clientX + 14) + 'px';
+      tip.style.top = (e.clientY - 24) + 'px';
+    }
+  });
+  container.addEventListener('mouseout', e => {
+    if (e.target.closest('.scatter-tile')) tip.style.display = 'none';
+  });
+
+  // Resize — re-fit with smooth glide (snap=false)
+  window.addEventListener('resize', () => {
+    if (_currentView !== 'scatter') return;
+    _scatterW = container.clientWidth || window.innerWidth;
+    _scatterH = container.clientHeight || window.innerHeight;
+    _autoFitScatter(false);
+  });
+}
+// ==============================================
+// POINCARE DISK VIEW  (ported from OpenMind)
+// ==============================================
+
+// Complex arithmetic
+function cMul(a,b){return[a[0]*b[0]-a[1]*b[1],a[0]*b[1]+a[1]*b[0]];}
+function cDiv(a,b){const d=b[0]*b[0]+b[1]*b[1];return[(a[0]*b[0]+a[1]*b[1])/d,(a[1]*b[0]-a[0]*b[1])/d];}
+function cSub(a,b){return[a[0]-b[0],a[1]-b[1]];}
+function cConj(a){return[a[0],-a[1]];}
+function cAbs(a){return Math.hypot(a[0],a[1]);}
+function cScale(a,s){return[a[0]*s,a[1]*s];}
+function mobiusTransform(z,a){
+  return cDiv(cSub(z,a), cSub([1,0],cMul(cConj(a),z)));
+}
+function visualScale(z){const r2=z[0]*z[0]+z[1]*z[1];return Math.max(1-r2,0.01);}
+
+const pdState = {
+  centerId: null,
+  positions: new Map(),
+  screenPositions: new Map(),
+  topSimilar: [],
+  diskCx: 0, diskCy: 0, diskR: 0,
+  animRAF: null,
+  nodeEls: new Map()
+};
+const pdHistory   = [];
+let _pdNodeMap    = {};
+let _pdPhotos     = null;
+let _pdEmbLayout  = null;
+let _pdSimCache   = {};
+let _pdInitialized = false;
+let _pdSimPull = 0.8;
+let _pdSimThreshold = 0.17 // = 1.0 - slider default 0.83, slider default 0.75;
+let _pdHoveredId = null;
+
+// ── WebGL renderer ────────────────────────────────────────────────────────
+const _PD_MIN_R=2,_PD_MAX_R=38;
+let _pdZoom = 1.0;
+let _pdGL=null;
+let _pdSVGBuilt=false; // shared SVG build cache, works even when _pdGL is null
+// FPS counter state
+let _pdFpsTimes = [], _pdFpsLast = 0;
+function _pdTickFPS() {
+  const now = performance.now();
+  _pdFpsTimes.push(now);
+  // Keep only last 60 frames
+  while (_pdFpsTimes.length > 60) _pdFpsTimes.shift();
+  // Update display at most once per 300ms
+  if (now - _pdFpsLast > 300) {
+    _pdFpsLast = now;
+    const span = _pdFpsTimes.length;
+    const fps = span > 1 ? Math.round((span - 1) * 1000 / (_pdFpsTimes[span-1] - _pdFpsTimes[0])) : 0;
+    const fpsEl = document.getElementById('pd-stat-fps');
+    const nodesEl = document.getElementById('pd-stat-nodes');
+    if (fpsEl) fpsEl.textContent = fps + ' fps';
+    if (nodesEl && pdState.screenPositions) nodesEl.textContent = (pdState.screenPositions.size) + ' nodes';
+  }
+}
+let _pdGLOK=false; // confirmed working after first successful pixel readback
+
+const _PD_VERT=`#version 300 es
+precision highp float;
+in vec2 a_corner;in vec2 a_pos;in float a_radius;in vec2 a_uv;in float a_root;
+uniform vec2 u_ctr;uniform float u_dr;uniform vec2 u_res;uniform float u_sl;
+out vec2 v_uv;out float v_vs;out float v_cd;out float v_root;
+void main(){
+  float r2=dot(a_pos,a_pos);v_vs=max(1.0-r2,0.0);v_cd=length(a_corner);v_root=a_root;
+  vec2 sc=u_ctr+a_pos*u_dr+a_corner*a_radius;
+  vec2 cl=sc/u_res*2.0-1.0;cl.y=-cl.y;
+  gl_Position=vec4(cl,0.0,1.0);
+  v_uv=a_uv+(a_corner*0.5+0.5)*u_sl;
+}`;
+const _PD_FRAG=`#version 300 es
+precision mediump float;
+uniform sampler2D u_tex;
+in vec2 v_uv;in float v_vs;in float v_cd;in float v_root;
+out vec4 fragColor;
+void main(){
+  if(v_vs<0.012||v_cd>1.0)discard;
+  float aa=smoothstep(1.0,0.88,v_cd);
+  if(v_root>0.5&&v_cd>0.80){fragColor=vec4(0.831,0.659,0.325,aa);return;}
+  vec4 t=texture(u_tex,v_uv);fragColor=vec4(t.rgb,aa);
+}`;
+
+function initPdGL(){
+  const cv=$('pd-gl-canvas');if(!cv)return false;
+  const gl=cv.getContext('webgl2',{alpha:true,premultipliedAlpha:false,antialias:false});
+  if(!gl){console.warn('WebGL2 unavailable');return false;}
+  const sh=(t,s)=>{const x=gl.createShader(t);gl.shaderSource(x,s);gl.compileShader(x);
+    if(!gl.getShaderParameter(x,gl.COMPILE_STATUS)){console.error(gl.getShaderInfoLog(x));return null;}return x;};
+  const vs=sh(gl.VERTEX_SHADER,_PD_VERT),fs=sh(gl.FRAGMENT_SHADER,_PD_FRAG);
+  if(!vs||!fs)return false;
+  const p=gl.createProgram();gl.attachShader(p,vs);gl.attachShader(p,fs);gl.linkProgram(p);
+  if(!gl.getProgramParameter(p,gl.LINK_STATUS)){console.error(gl.getProgramInfoLog(p));return false;}
+  const lc=gl.getAttribLocation(p,'a_corner'),lp=gl.getAttribLocation(p,'a_pos'),
+    lr=gl.getAttribLocation(p,'a_radius'),lu=gl.getAttribLocation(p,'a_uv'),lt=gl.getAttribLocation(p,'a_root');
+  const qb=gl.createBuffer(),ib=gl.createBuffer();
+  // Build VAO with all attribute state baked in
+  const vao=gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  // Corner buffer (divisor 0 — one quad per instance)
+  gl.bindBuffer(gl.ARRAY_BUFFER,qb);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,-1,1,1,-1,1]),gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(lc);gl.vertexAttribPointer(lc,2,gl.FLOAT,false,0,0);gl.vertexAttribDivisor(lc,0);
+  // Instance buffer (divisor 1 — one entry per node)
+  const BYTES=24;
+  gl.bindBuffer(gl.ARRAY_BUFFER,ib);
+  gl.enableVertexAttribArray(lp);gl.vertexAttribPointer(lp,2,gl.FLOAT,false,BYTES,0);gl.vertexAttribDivisor(lp,1);
+  gl.enableVertexAttribArray(lr);gl.vertexAttribPointer(lr,1,gl.FLOAT,false,BYTES,8);gl.vertexAttribDivisor(lr,1);
+  gl.enableVertexAttribArray(lu);gl.vertexAttribPointer(lu,2,gl.FLOAT,false,BYTES,12);gl.vertexAttribDivisor(lu,1);
+  gl.enableVertexAttribArray(lt);gl.vertexAttribPointer(lt,1,gl.FLOAT,false,BYTES,20);gl.vertexAttribDivisor(lt,1);
+  gl.bindVertexArray(null);
+  _pdGL={gl,prog:p,vao,qb,ib,atlasTex:null,grid:1,atlasIdx:new Map(),sl:1,
+    uc:gl.getUniformLocation(p,'u_ctr'),ud:gl.getUniformLocation(p,'u_dr'),
+    ur:gl.getUniformLocation(p,'u_res'),us:gl.getUniformLocation(p,'u_sl'),ua:gl.getUniformLocation(p,'u_tex')};
+  return true;
+}
+
+async function pdGLLoadAtlas(nodes){
+  if(!_pdGL||!nodes||!nodes.length)return;
+  // Only include nodes that have a thumbnail — slots are assigned only to drawable nodes
+  // This fixes the slot-skipping bug where empty slots caused wrong images to appear
+  const drawable=nodes.filter(n=>n.thumbnail_path);
+  const N=drawable.length;
+  if(N===0)return;
+  const g=Math.ceil(Math.sqrt(N))||1,sz=g*64;
+  const oc=document.createElement('canvas');oc.width=oc.height=sz;
+  const ctx=oc.getContext('2d');ctx.fillStyle='#1c1a16';ctx.fillRect(0,0,sz,sz);
+  // Assign slots only to drawable nodes — slot i always has an image
+  const idx=new Map();
+  drawable.forEach((n,i)=>idx.set(n.id,i));
+  // Use fetch+createImageBitmap instead of new Image() — works on Mobile Safari+Cloudflare
+  const SEM=24;
+  let active=0,qi=0;
+  await new Promise(done=>{
+    function next(){
+      while(active<SEM&&qi<N){
+        const i=qi++;active++;
+        const n=drawable[i];
+        const finish=()=>{active--;if(qi<N)next();else if(active===0)done();};
+        fetch(thumbUrl(n.thumbnail_path))
+          .then(r=>r.blob())
+          .then(b=>createImageBitmap(b,{resizeWidth:64,resizeHeight:64,resizeQuality:'medium'}))
+          .then(bmp=>{ctx.drawImage(bmp,(i%g)*64,Math.floor(i/g)*64,64,64);bmp.close();finish();})
+          .catch(finish);
+      }
+      if(qi>=N&&active===0)done();
+    }
+    next();
+  });
+  const{gl}=_pdGL;
+  if(_pdGL.atlasTex)gl.deleteTexture(_pdGL.atlasTex);
+  const t=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,t);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,oc);
+  gl.generateMipmap(gl.TEXTURE_2D);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  _pdGL.atlasTex=t;_pdGL.grid=g;_pdGL.atlasIdx=idx;_pdGL.sl=1/g;
+}
+
+function _pdComputeScreenPos(positions,cx,cy,R){
+  pdState.screenPositions.clear();
+  for(const[id,pos]of positions){
+    const vs=visualScale(pos);
+    if(vs<0.005&&id!==pdState.centerId)continue;
+    const isRoot=id===pdState.centerId;
+    const isHovered=id===_pdHoveredId&&!isRoot;
+    const nr=_PD_MIN_R+(_PD_MAX_R-_PD_MIN_R)*Math.pow(vs,1.8);
+    // Skip nodes too small to show — no empty squares
+    if(nr<4&&!isRoot)continue;
+    const rootR=Math.max(nr,Math.min(64,R*0.22));
+    const hoverR=Math.max(nr,Math.min(128,R*0.44)); // double size on hover
+    const r=isHovered?hoverR:isRoot?rootR:nr;
+    const effectiveVs=isHovered?3:isRoot?2:1; // removed vs-based z: no "closest to center on top"
+    // Store naturalR separately — hit testing uses naturalR so hover doesn't cascade
+    pdState.screenPositions.set(id,{sx:cx+pos[0]*R,sy:cy+pos[1]*R,r,naturalR:nr,vs:effectiveVs});
+  }
+}
+
+function _pdSVGFallback(positions,cx,cy,R){
+  // Build persistent SVG nodes, each positioned via transform="translate(sx,sy)"
+  // so _pdUpdateSVGPositions() can animate them in-place without a full rebuild.
+  const svg=$('pd-svg'); if(!svg)return;
+  _pdEnsureSVGStructure(svg,0,0);
+  const g=$('pd-nodes-svg');
+  while(g.lastChild)g.removeChild(g.lastChild);
+  const sorted=[...pdState.screenPositions.entries()].sort((a,b)=>a[1].vs-b[1].vs);
+  const MIN_THUMB_R=10, RX=3;
+  const ns='http://www.w3.org/2000/svg';
+  for(const[id,sp]of sorted){
+    const node=_pdNodeMap[id]; if(!node)continue;
+    const isRoot=id===pdState.centerId;
+    const r=sp.r, sz=r*2;
+    const showThumb=r>=MIN_THUMB_R&&node.thumbnail_path;
+    // Every node is a <g data-id transform=translate(sx,sy)>
+    const el=document.createElementNS(ns,'g');
+    el.classList.add('pd-node-g');
+    el.dataset.id=id;
+    el.setAttribute('transform',`translate(${sp.sx.toFixed(1)},${sp.sy.toFixed(1)})`);
+    if(!showThumb){
+      const c=document.createElementNS(ns,'rect');
+      c.setAttribute('x',-r);c.setAttribute('y',-r);
+      c.setAttribute('width',sz);c.setAttribute('height',sz);
+      c.setAttribute('rx',RX);c.setAttribute('ry',RX);
+      c.setAttribute('fill','none');
+      c.setAttribute('stroke',isRoot?'var(--accent)':'rgba(255,255,255,0.25)');
+      c.setAttribute('stroke-width',isRoot?'2':'0.8');
+      el.appendChild(c);
+    } else {
+      const clipId='pdc-'+id;
+      const defs=document.createElementNS(ns,'defs');
+      const clip=document.createElementNS(ns,'clipPath');
+      clip.setAttribute('id',clipId);
+      const cr=document.createElementNS(ns,'rect');
+      cr.setAttribute('x',-r);cr.setAttribute('y',-r);
+      cr.setAttribute('width',sz);cr.setAttribute('height',sz);
+      cr.setAttribute('rx',RX);cr.setAttribute('ry',RX);
+      clip.appendChild(cr);defs.appendChild(clip);el.appendChild(defs);
+      const bg=document.createElementNS(ns,'rect');
+      bg.setAttribute('x',-r);bg.setAttribute('y',-r);
+      bg.setAttribute('width',sz);bg.setAttribute('height',sz);
+      bg.setAttribute('rx',RX);bg.setAttribute('ry',RX);
+      bg.setAttribute('fill','#1c1a16');
+      if(isRoot){bg.setAttribute('stroke','var(--accent)');bg.setAttribute('stroke-width','2.5');}
+      else{bg.setAttribute('stroke','rgba(255,255,255,0.15)');bg.setAttribute('stroke-width','0.8');}
+      el.appendChild(bg);
+      const img=document.createElementNS(ns,'image');
+      img.setAttribute('x',-r);img.setAttribute('y',-r);
+      img.setAttribute('width',sz);img.setAttribute('height',sz);
+      img.setAttribute('clip-path',`url(#${clipId})`);
+      img.setAttribute('preserveAspectRatio','xMidYMid slice');
+      img.setAttribute('href',thumbUrl(node.thumbnail_path));
+      el.appendChild(img);
+    }
+    g.appendChild(el);
+  }
+}
+
+// Fast in-place update — moves nodes by updating transform, resizes rects/images.
+// Called every frame during drag and animation instead of full rebuild.
+function _pdUpdateSVGPositions(positions,cx,cy,R){
+  const g=$('pd-nodes-svg'); if(!g)return;
+  const vsMap=new Map(); // id→vs for z-sort
+  for(const el of g.children){
+    const id=el.dataset.id; if(!id)continue;
+    const pos=positions.get(id);
+    if(!pos){el.style.display='none';continue;} // node not in current layout — hide it
+    const vs=visualScale(pos);
+    if(vs<0.005&&id!==pdState.centerId){el.style.display='none';continue;}
+    const isRoot=id===pdState.centerId;
+    const isHovered=id===_pdHoveredId&&!isRoot;
+    const nr=_PD_MIN_R+(_PD_MAX_R-_PD_MIN_R)*Math.pow(vs,1.8);
+    // Hide nodes too small to show — no empty squares
+    if(nr<4&&!isRoot){el.style.display='none';continue;}
+    el.style.display='';
+    const rootR=Math.max(nr,Math.min(64,R*0.22));
+    const hoverR=Math.max(nr,Math.min(128,R*0.44));
+    const r=isHovered?hoverR:isRoot?rootR:nr;
+    const sx=cx+pos[0]*R, sy=cy+pos[1]*R;
+    const sz=r*2;
+    el.setAttribute('transform',`translate(${sx.toFixed(1)},${sy.toFixed(1)})`);
+    for(const rect of el.querySelectorAll('rect')){
+      const isClip=rect.closest('clipPath')!==null;
+      rect.setAttribute('x',-r);rect.setAttribute('y',-r);
+      rect.setAttribute('width',sz);rect.setAttribute('height',sz);
+      if(!isClip){
+        if(isRoot){rect.setAttribute('stroke','var(--accent)');rect.setAttribute('stroke-width','2.5');}
+        else{rect.setAttribute('stroke','rgba(255,255,255,0.15)');rect.setAttribute('stroke-width','0.8');}
+      }
+    }
+    const img=el.querySelector('image');
+    if(img){img.setAttribute('x',-r);img.setAttribute('y',-r);img.setAttribute('width',sz);img.setAttribute('height',sz);}
+    const effectiveVs=isHovered?3:isRoot?2:1; // no vs-based z-ordering
+    pdState.screenPositions.set(id,{sx,sy,r,naturalR:nr,vs:effectiveVs});
+    vsMap.set(id,effectiveVs); // hovered=3 > root=2 > others flat
+  }
+  // Re-sort DOM children: far (low vs) first → near (high vs) last = nearest painted on top
+  const sorted=[...g.children].sort((a,b)=>(vsMap.get(a.dataset.id)||0)-(vsMap.get(b.dataset.id)||0));
+  sorted.forEach(el=>g.appendChild(el)); // appendChild moves existing node to end
+  // Update edges
+  const edgesG=$('pd-edges'); if(!edgesG)return;
+  for(const path of edgesG.querySelectorAll('.pd-edge')){
+    const p1=positions.get(path.dataset.source);
+    const p2=positions.get(path.dataset.target);
+    if(!p1||!p2)continue;
+    const d=geodesicPath(p1,p2,cx,cy,R);
+    if(d)path.setAttribute('d',d);
+  }
+}
+
+function pdGLRender(positions,cx,cy,R,W,H){
+  _pdTickFPS();
+  _pdComputeScreenPos(positions,cx,cy,R);
+  const glAvail=_pdGL&&_pdGL.atlasTex;
+  if(!_pdSVGBuilt){
+    try{
+      _pdSVGFallback(positions,cx,cy,R);
+    }catch(e){
+      console.error('_pdSVGFallback error:',e);
+    }
+    _pdSVGBuilt=true;
+    if(_pdGL) _pdGL._svgBuilt=true;
+  } else {
+    // Fast path: update node positions in-place
+    _pdUpdateSVGPositions(positions,cx,cy,R);
+  }
+  if(glAvail){
+    const g=_pdGL,gl=g.gl,cv=gl.canvas;
+    const dpr=window.devicePixelRatio||1;
+    const pw=W||cv.clientWidth||window.innerWidth;
+    const ph=H||cv.clientHeight||window.innerHeight;
+    const cw=Math.round(pw*dpr),ch=Math.round(ph*dpr);
+    if(cv.width!==cw||cv.height!==ch){cv.width=cw;cv.height=ch;}
+    gl.viewport(0,0,cw,ch);gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT);
+    const entries=[];
+    for(const[id,sp]of pdState.screenPositions){
+      const pos=positions.get(id); if(!pos)continue;
+      const isRoot=id===pdState.centerId;
+      const slot=g.atlasIdx.get(id)??-1;
+      const uu=slot>=0?(slot%g.grid)/g.grid:0;
+      const uv=slot>=0?Math.floor(slot/g.grid)/g.grid:0;
+      entries.push([pos[0],pos[1],sp.r*dpr,uu,uv,isRoot?1:0,sp.vs]); // sp.vs already has hovered=3, root=2
+    }
+    entries.sort((a,b)=>a[6]-b[6]);
+    const N=entries.length;
+    if(N>0){
+      const d=new Float32Array(N*6);
+      for(let i=0;i<N;i++){const e=entries[i],b=i*6;
+        d[b]=e[0];d[b+1]=e[1];d[b+2]=e[2];d[b+3]=e[3];d[b+4]=e[4];d[b+5]=e[5];}
+      gl.bindVertexArray(g.vao);
+      gl.bindBuffer(gl.ARRAY_BUFFER,g.ib);
+      gl.bufferData(gl.ARRAY_BUFFER,d,gl.DYNAMIC_DRAW);
+      gl.bindBuffer(gl.ARRAY_BUFFER,null);
+      gl.useProgram(g.prog);
+      gl.uniform2f(g.uc,cx*dpr,cy*dpr);gl.uniform1f(g.ud,R*dpr);
+      gl.uniform2f(g.ur,cw,ch);gl.uniform1f(g.us,g.sl);gl.uniform1i(g.ua,0);
+      gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,g.atlasTex);
+      gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
+      gl.drawArraysInstanced(gl.TRIANGLES,0,6,N);
+      gl.bindVertexArray(null);
+    }
+  }
+}
+
+function _pdHitTest(cx,cy){
+  const rect=$('view-poincare').getBoundingClientRect();
+  const px=cx-rect.left,py=cy-rect.top;
+  let best=null,bestD=Infinity;
+  for(const[id,sp]of pdState.screenPositions){
+    // Use naturalR for hit testing so hover enlargement doesn't cause cascade
+    const hr=sp.naturalR!==undefined?sp.naturalR:sp.r;
+    const dx=Math.abs(px-sp.sx),dy=Math.abs(py-sp.sy);
+    const inSq=dx<=hr+8&&dy<=hr+8;
+    const d=Math.hypot(dx,dy);
+    if(inSq&&d<bestD){bestD=d;best=id;}
+  }
+  return best;
+}
+// ── end WebGL ────────────────────────────────────────────────────────────
+
+async function initPoincareView() {
+  $('pd-loading').style.display = 'flex';
+  if(!_pdGL) initPdGL();
+  if (!_pdPhotos) {
+    const data = await api('/api/photos');
+    _pdPhotos = data.nodes;
+    for (const n of _pdPhotos) _pdNodeMap[n.id] = n;
+  }
+  if (!_pdEmbLayout) _pdEmbLayout = await api(`/api/embedding-layout?limit=${_scatterLimit}`);
+  _pdInitialized = true;
+  $('pd-loading').style.display = 'none'; // hide spinner before atlas load
+  if (!pdState.centerId && _pdPhotos.length) {
+    const pos = _pdEmbLayout.positions;
+    let best = null, bestDist = Infinity;
+    for (const [id, [x,y]] of Object.entries(pos)) {
+      const d = (x-.5)*(x-.5)+(y-.5)*(y-.5);
+      if (d < bestDist) { bestDist = d; best = id; }
+    }
+    if (best) await enterPoincareView(best);
+    else $('pd-empty').style.display = 'flex';
+  } else if (pdState.centerId) {
+    renderPoincareGraph();
+    const vn=[...pdState.positions.keys()].map(nid=>_pdNodeMap[nid]).filter(Boolean);
+    pdGLLoadAtlas(vn).then(()=>renderPoincareGraph());
+  } else {
+    $('pd-empty').style.display = 'flex';
+  }
+  $('pd-back').addEventListener('click', pdGoBack);
+  $('pd-detail').addEventListener('dblclick', hidePdDetail);
+  $('pd-detail-full-btn').addEventListener('click', e => { e.stopPropagation(); if (pdState.centerId) openDetail(pdState.centerId); });
+  window.addEventListener('resize', () => { if (_currentView === 'poincare') { _pdSVGBuilt=false; if(_pdGL) _pdGL._svgBuilt=false; requestAnimationFrame(renderPoincareGraph); } });
+  _initPdDrag();
+  _initPdEvents();
+  $('pd-jump-btn').addEventListener('click', () => {
+    if (!_pdPhotos || !_pdPhotos.length) return;
+    const pool = _pdPhotos.filter(n => n.id !== pdState.centerId);
+    if (!pool.length) return;
+    const pick = pool[Math.floor(Math.random() * pool.length)];
+    enterPoincareView(pick.id);
+  });
+
+  // Demo mode: auto-navigate to neighbors, preferring high-similarity ones
+  let _demoActive = false;
+  let _demoTimeout = null;
+  async function _demoStep() {
+    if (!_demoActive) return;
+    if (!pdState.centerId) { _demoTimeout = setTimeout(_demoStep, 1500); return; }
+    // Pick a neighbor weighted by similarity — prefer closer nodes, occasional surprise
+    const candidates = [];
+    for (const [id, pos] of pdState.positions) {
+      if (id === pdState.centerId) continue;
+      const dist = Math.hypot(pos[0], pos[1]);
+      if (dist < 0.8) candidates.push({ id, dist });
+    }
+    if (!candidates.length) { _demoTimeout = setTimeout(_demoStep, 1500); return; }
+    // Weight toward closer (more similar) nodes, but allow some variance
+    candidates.sort((a,b) => a.dist - b.dist);
+    const top = candidates.slice(0, Math.min(8, candidates.length));
+    // Weighted random: closer = more likely
+    const weights = top.map((c,i) => Math.pow(0.7, i));
+    const total = weights.reduce((s,w)=>s+w, 0);
+    let r = Math.random() * total;
+    let pick = top[0];
+    for (let i = 0; i < top.length; i++) { r -= weights[i]; if (r <= 0) { pick = top[i]; break; } }
+    await enterPoincareView(pick.id);
+    if (_demoActive) _demoTimeout = setTimeout(_demoStep, 2200);
+  }
+  function _demoToggle() {
+    _demoActive = !_demoActive;
+    const btn = $('pd-demo-btn');
+    if (_demoActive) {
+      btn.textContent = 'stop';
+      btn.style.borderColor = 'var(--accent)';
+      btn.style.color = 'var(--accent)';
+      _demoStep();
+    } else {
+      clearTimeout(_demoTimeout);
+      btn.textContent = 'demo';
+      btn.style.borderColor = 'rgba(255,255,255,0.2)';
+      btn.style.color = 'var(--text-dim)';
+    }
+  }
+  $('pd-demo-btn').addEventListener('click', _demoToggle);
+  // Stop demo on any manual interaction
+  document.getElementById('view-poincare').addEventListener('mousedown', () => { if (_demoActive) _demoToggle(); });
+  document.getElementById('view-poincare').addEventListener('touchstart', () => { if (_demoActive) _demoToggle(); }, { passive: true });
+  const forceSlider = $('pd-force-slider');
+  forceSlider.addEventListener('touchstart', e => e.stopPropagation(), { passive: true });
+  forceSlider.addEventListener('touchmove', e => e.stopPropagation(), { passive: true });
+  forceSlider.addEventListener('touchend', e => e.stopPropagation(), { passive: true });
+  // Shared debounced recompute — force and sim sliders both funnel here
+  // so they can't race each other
+  let _pdSliderGen = 0;
+  let _pdSliderTimer = null;
+  async function _pdSliderRecompute() {
+    if (!pdState.centerId) return;
+    const gen = ++_pdSliderGen;
+    await pdComputeLayout(pdState.centerId);
+    if (gen !== _pdSliderGen) return;
+    _pdSVGBuilt = false; if (_pdGL) _pdGL._svgBuilt = false;
+    renderPoincareGraph();
+    const vn=[...pdState.positions.keys()].map(nid=>_pdNodeMap[nid]).filter(Boolean);
+    await pdGLLoadAtlas(vn);
+    if (gen !== _pdSliderGen) return;
+    renderPoincareGraph();
+  }
+  function _pdSliderDebounce() {
+    clearTimeout(_pdSliderTimer);
+    _pdSliderTimer = setTimeout(_pdSliderRecompute, 80);
+  }
+
+  forceSlider.addEventListener('input', e => {
+    _pdSimPull = parseFloat(e.target.value);
+    _pdSliderDebounce();
+  });
+
+  const simSlider = $('pd-sim-slider');
+  simSlider.addEventListener('touchstart', e => e.stopPropagation(), { passive: true });
+  simSlider.addEventListener('touchmove', e => e.stopPropagation(), { passive: true });
+  simSlider.addEventListener('touchend', e => e.stopPropagation(), { passive: true });
+  simSlider.addEventListener('input', e => {
+    _pdSimThreshold = 1.0 - parseFloat(e.target.value); // 0=show all, 1=show only top
+    _pdSliderDebounce();
+  });
+
+  const zoomSlider = $('pd-zoom-slider');
+  if (zoomSlider) {
+    zoomSlider.addEventListener('touchstart', e => e.stopPropagation(), { passive: true });
+    zoomSlider.addEventListener('touchmove', e => e.stopPropagation(), { passive: true });
+    zoomSlider.addEventListener('touchend', e => e.stopPropagation(), { passive: true });
+    zoomSlider.addEventListener('input', e => {
+      _pdZoom = 2.3 - parseFloat(e.target.value);
+      if (pdState.centerId) { _pdSVGBuilt=false; if(_pdGL)_pdGL._svgBuilt=false; renderPoincareGraph(); }
+    });
+  }
+}
+
+
+
+function _initPdDrag(){
+  const container=$("view-poincare");
+  const svg=$("pd-svg");
+  let dragging=false,dragStartX=0,dragStartY=0,dragMoved=false;
+  let velocityX=0,velocityY=0,lastMoveTime=0,momentumRAF=null;
+  function applyDragTransform(dx,dy){
+    if(pdState.animRAF)return;
+    const{diskCx:cx,diskCy:cy,diskR:R,diskW:W,diskH:H}=pdState;
+    if(!R)return;
+    const scale=0.8/R;let a=[dx*scale,dy*scale];
+    const aLen=cAbs(a);if(aLen>0.9){a[0]*=.9/aLen;a[1]*=.9/aLen;}
+    const np=new Map();
+    for(const[id,pos]of pdState.positions)np.set(id,mobiusTransform(pos,a));
+    pdState.positions=np;
+    // Always use pdGLRender — handles both SVG and GL in one pass
+    pdGLRender(pdState.positions,cx,cy,R,W,H);
+  }
+  function startMomentum(){
+    let mvx=velocityX,mvy=velocityY;
+    if(Math.hypot(mvx,mvy)<1)return;
+    function tick(){mvx*=.92;mvy*=.92;
+      if(Math.hypot(mvx,mvy)<.5){momentumRAF=null;return;}
+      applyDragTransform(-mvx,-mvy);momentumRAF=requestAnimationFrame(tick);}
+    momentumRAF=requestAnimationFrame(tick);
+  }
+  function cancelMomentum(){if(momentumRAF){cancelAnimationFrame(momentumRAF);momentumRAF=null;}}
+  // Mouse drag — on container, track on window (same pattern as scatter)
+  container.addEventListener("mousedown",e=>{
+    if(_pdHitTest(e.clientX,e.clientY))return;
+    cancelMomentum();dragging=true;dragMoved=false;
+    dragStartX=e.clientX;dragStartY=e.clientY;
+    velocityX=0;velocityY=0;lastMoveTime=performance.now();
+    container.style.cursor="grabbing";e.preventDefault();
+  });
+  window.addEventListener("mousemove",e=>{
+    if(!dragging)return;
+    const dx=e.clientX-dragStartX,dy=e.clientY-dragStartY;
+    if(Math.hypot(dx,dy)>3)dragMoved=true;if(!dragMoved)return;
+    const now=performance.now(),dt=Math.max(now-lastMoveTime,1);
+    velocityX=dx/dt*16;velocityY=dy/dt*16;lastMoveTime=now;
+    applyDragTransform(-dx,-dy);dragStartX=e.clientX;dragStartY=e.clientY;
+  });
+  window.addEventListener("mouseup",()=>{
+    if(dragging){dragging=false;container.style.cursor="";if(dragMoved)startMomentum();}
+  });
+  // Touch drag — on container, same pattern as scatter
+  let touchId=null;
+  container.addEventListener("touchstart",e=>{
+    if(e.touches.length!==1)return;
+    if(_pdHitTest(e.touches[0].clientX,e.touches[0].clientY))return;
+    cancelMomentum();touchId=e.touches[0].identifier;
+    dragStartX=e.touches[0].clientX;dragStartY=e.touches[0].clientY;
+    dragMoved=false;velocityX=0;velocityY=0;lastMoveTime=performance.now();
+  },{passive:true});
+  container.addEventListener("touchmove",e=>{
+    if(touchId===null)return;
+    const touch=[...e.touches].find(t=>t.identifier===touchId);if(!touch)return;
+    const dx=touch.clientX-dragStartX,dy=touch.clientY-dragStartY;
+    if(!dragMoved&&Math.hypot(dx,dy)<8)return;
+    dragMoved=true;e.preventDefault();
+    const now=performance.now(),dt=Math.max(now-lastMoveTime,1);
+    velocityX=dx/dt*16;velocityY=dy/dt*16;lastMoveTime=now;
+    applyDragTransform(-dx,-dy);dragStartX=touch.clientX;dragStartY=touch.clientY;
+  },{passive:false});
+  container.addEventListener("touchend",e=>{
+    if(touchId===null)return;
+    const found=[...e.changedTouches].find(t=>t.identifier===touchId);
+    if(found){touchId=null;if(dragMoved)startMomentum();}
+  },{passive:true});
+}
+
+function _initPdEvents(){
+  const container=$("view-poincare"),tip=$("pd-tooltip");
+  function inPD(){ return _currentView==="poincare"; }
+  container.addEventListener("mousemove",e=>{
+    if(!inPD())return;
+    const id=_pdHitTest(e.clientX,e.clientY);
+    if(id===_pdHoveredId)return;
+    _pdHoveredId=id;
+    // Re-render so hovered node snaps to large size and sorts on top
+    const{diskCx:cx,diskCy:cy,diskR:R,diskW:W,diskH:H}=pdState;
+    if(R)pdGLRender(pdState.positions,cx,cy,R,W,H);
+  });
+  container.addEventListener("mouseleave",()=>{
+    if(_pdHoveredId===null)return;
+    _pdHoveredId=null;
+    const{diskCx:cx,diskCy:cy,diskR:R,diskW:W,diskH:H}=pdState;
+    if(R)pdGLRender(pdState.positions,cx,cy,R,W,H);
+  });
+  window.addEventListener("click",e=>{
+    if(!inPD())return;
+    const id=_pdHitTest(e.clientX,e.clientY);
+    if(!id)return;
+    if(id!==pdState.centerId) enterPoincareView(id);
+  });
+  window.addEventListener("dblclick",e=>{
+    if(!inPD())return;
+    const id=_pdHitTest(e.clientX,e.clientY);
+    if(id){
+      const detail=$('pd-detail');
+      if(detail.classList.contains('open'))hidePdDetail();
+      else renderPdDetail(id);
+    }
+  });
+  let _lt=null,_li=null,_ltid=null,_tsx=0,_tsy=0,_lastTap=0,_lastTapId=null;
+  window.addEventListener("touchstart",e=>{
+    if(!inPD())return;
+    const t=e.touches[0],id=_pdHitTest(t.clientX,t.clientY);if(!id)return;
+    _li=id;_ltid=t.identifier;_tsx=t.clientX;_tsy=t.clientY;
+  },{passive:true});
+  window.addEventListener("touchmove",e=>{
+    if(!_ltid)return;
+    const found=[...e.changedTouches].find(t=>t.identifier===_ltid);
+    if(found&&Math.hypot(found.clientX-_tsx,found.clientY-_tsy)>8){_li=null;}
+  },{passive:true});
+  window.addEventListener("touchend",e=>{
+    if(!inPD()||!_ltid)return;
+    const found=[...e.changedTouches].find(t=>t.identifier===_ltid);if(!found)return;
+    _ltid=null;
+    const id=_li;_li=null;
+    if(!id)return;
+    const now=Date.now();
+    const isDoubleTap=_lastTapId===id&&(now-_lastTap)<350;
+    _lastTap=now;_lastTapId=id;
+    if(isDoubleTap){
+      const detail=$('pd-detail');
+      if(detail.classList.contains('open'))hidePdDetail();
+      else renderPdDetail(id);
+    } else if(id!==pdState.centerId){
+      enterPoincareView(id);
+    }
+  },{passive:false});
+}
+
+
+async function enterPoincareView(id, opts={}) {
+  if (_currentView !== 'poincare') switchView('poincare');
+  const isNav = pdState.centerId && pdState.centerId !== id;
+  if (isNav && !opts.isBack) {
+    // Forward navigation — push current to history
+    const prev = _pdNodeMap[pdState.centerId];
+    if (prev) pdHistory.push({ id: pdState.centerId, label: prev.label || prev.taken_at || '' });
+  } else if (!pdState.centerId && !opts.isBack) {
+    pdHistory.length = 0;
+  }
+  const prevCenterId = pdState.centerId;
+  pdState.centerId = id;
+  $('pd-detail').classList.remove('open');
+  _pdSVGBuilt=false; if(_pdGL) _pdGL._svgBuilt=false; // invalidate SVG cache for new center
+  $('pd-empty').style.display = 'none';
+
+  if (isNav && pdState.positions.size > 0) {
+    // Same animation for forward and back — fly to node, recompute, settle
+    const flyP = pdAnimateToNode(id);
+    await pdComputeLayout(id);
+    const vn=[...pdState.positions.keys()].map(nid=>_pdNodeMap[nid]).filter(Boolean);
+    const atlasP = pdGLLoadAtlas(vn);
+    await flyP;
+    await pdSettleIntoLayout();
+    await atlasP;
+    renderPoincareGraph();
+  } else {
+    await pdComputeLayout(id);
+    renderPoincareGraph(); // show disk immediately (no textures yet)
+    const vn=[...pdState.positions.keys()].map(nid=>_pdNodeMap[nid]).filter(Boolean);
+    pdGLLoadAtlas(vn).then(()=>renderPoincareGraph()); // re-render with textures when ready
+  }
+  renderPdNav();
+}
+
+// Möbius transformation: moves point `p` (in unit disk) so that `a` maps to origin.
+// This is the standard hyperbolic translation T_a(z) = (z - a) / (1 - conj(a)*z)
+// operating on complex numbers represented as [x, y].
+function _mobiusTranslate(p, a) {
+  // (p - a) / (1 - conj(a)*p)  in complex arithmetic
+  const num_x = p[0] - a[0], num_y = p[1] - a[1];
+  const den_x = 1 - (a[0]*p[0] + a[1]*p[1]);
+  const den_y = -(- a[1]*p[0] + a[0]*p[1]); // conj(a)*p = (a[0]-i*a[1])*(p[0]+i*p[1])
+  // den = 1 - conj(a)*p = (den_x + i*den_y)
+  // actually: conj(a)*p = (a[0]*p[0]+a[1]*p[1]) + i*(a[0]*p[1]-a[1]*p[0])
+  const ca_p_x = a[0]*p[0] + a[1]*p[1];
+  const ca_p_y = a[0]*p[1] - a[1]*p[0];
+  const d_x = 1 - ca_p_x, d_y = -ca_p_y;
+  const denom = d_x*d_x + d_y*d_y;
+  if (denom < 1e-10) return [0, 0];
+  return [(num_x*d_x + num_y*d_y)/denom, (num_y*d_x - num_x*d_y)/denom];
+}
+
+async function pdComputeLayout(rootId) {
+  if (!_pdSimCache[rootId]) {
+    try {
+      const d = await api(`/api/media/${rootId}/similarities?limit=${_scatterLimit}`);
+      _pdSimCache[rootId] = d.similarities || [];
+    } catch { _pdSimCache[rootId] = []; }
+  }
+  const simsData = _pdSimCache[rootId];
+  const simMap = {};
+  for (const s of simsData) simMap[s.id] = s.score;
+  const pos = (_pdEmbLayout && _pdEmbLayout.positions) || {};
+  const rootPCA = pos[rootId] || [0.5, 0.5];
+  const positions = new Map();
+  positions.set(rootId, [0, 0]);
+
+  // Build full candidate list — only nodes with PCA positions get stable angles
+  const PD_MAX_NODES = _scatterLimit;
+  // Only include nodes the server actually returned similarity scores for
+  // (nodes with sim=0 are phantoms — server filtered them out at sim>0.1)
+  const allNodes = (_pdPhotos || []).filter(n => n.id !== rootId && pos[n.id] && simMap[n.id]);
+  allNodes.sort((a, b) => (simMap[b.id] || 0) - (simMap[a.id] || 0));
+  const fullItems = allNodes.slice(0, PD_MAX_NODES).map(n => {
+    const sim = simMap[n.id];
+    return { id: n.id, sim };
+  });
+  // Use actual score range for threshold so slider spans the real distribution
+  const scores = fullItems.map(it => it.sim);
+  const actualMax = scores.length ? Math.max(...scores) : 1.0;
+  const actualMin = scores.length ? Math.min(...scores) : 0.1;
+
+  // === GLOBAL COMPASS via Möbius transformation ===
+  // 1. Map all PCA [x,y] (range ~[0,1]) into the unit disk scaled by _pdSimPull
+  //    so the force slider controls how spread out the global map appears.
+  //    Scale so the full PCA extent fits within radius 0.92 of the disk.
+  // diskScale is fixed — angle directions don't change with force slider
+  const diskScale = 0.92;
+  // Root's position in the disk (before Möbius centering)
+  const rootDisk = [
+    (rootPCA[0] - 0.5) * 2 * diskScale,
+    (rootPCA[1] - 0.5) * 2 * diskScale
+  ];
+
+  // Normalize sim scores against fixed bounds for radial blend
+  const SIM_MIN = 0.1, SIM_MAX = 1.0, SIM_RANGE = SIM_MAX - SIM_MIN;
+
+  for (const it of fullItems) {
+    const pca = pos[it.id];
+    // Map this node's PCA position into the disk
+    const nodeDisk = [
+      (pca[0] - 0.5) * 2 * diskScale,
+      (pca[1] - 0.5) * 2 * diskScale
+    ];
+    // Apply Möbius transform so root maps to origin — preserves global compass directions
+    const transformed = _mobiusTranslate(nodeDisk, rootDisk);
+    // Clamp to disk (floating point safety)
+    const mag = Math.hypot(transformed[0], transformed[1]);
+    const clamped = mag > 0.97 ? [transformed[0]*0.97/mag, transformed[1]*0.97/mag] : transformed;
+
+    // Angle from global compass, radius from similarity with _pdSimPull exponent
+    const angle = Math.atan2(clamped[1], clamped[0]);
+    const normalized = Math.max(0, Math.min(1, (it.sim - SIM_MIN) / SIM_RANGE));
+    // _pdSimPull controls radial spread: high=tight cluster near center, low=spread to edge
+    const simR = Math.min(0.72, 0.08 + Math.pow(1 - normalized, _pdSimPull) * 0.72);
+    it.diskPos = [Math.cos(angle) * simR, Math.sin(angle) * simR];
+  }
+
+  // Threshold is applied as a fraction of the actual score range
+  // _pdSimThreshold=0 means show all, =1 means show only top node
+  const thresholdScore = actualMin + _pdSimThreshold * (actualMax - actualMin);
+  for (const it of fullItems) {
+    if (it.sim >= thresholdScore) {
+      positions.set(it.id, it.diskPos);
+    }
+  }
+  pdState.topSimilar = simsData.slice(0, 5).map(s => s.id);
+  pdState.positions  = positions;
+}
+
+function geodesicPath(p1, p2, cx, cy, R) {
+  const dx = p2[0]-p1[0], dy = p2[1]-p1[1];
+  const dist = Math.hypot(dx,dy);
+  if (dist < 2) return '';
+  if (Math.abs(p1[0]*p2[1]-p1[1]*p2[0]) < 0.02*R*R || dist < R*0.15)
+    return `M${cx+p1[0]*R},${cy+p1[1]*R} L${cx+p2[0]*R},${cy+p2[1]*R}`;
+  const r1sq=p1[0]*p1[0]+p1[1]*p1[1], r2sq=p2[0]*p2[0]+p2[1]*p2[1];
+  if (r1sq<0.001||r2sq<0.001) return `M${cx+p1[0]*R},${cy+p1[1]*R} L${cx+p2[0]*R},${cy+p2[1]*R}`;
+  const inv1=[p1[0]/r1sq,p1[1]/r1sq];
+  const [ax,ay]=[p1[0],p1[1]], [bx,by]=[p2[0],p2[1]], [ex,ey]=inv1;
+  const D=2*(ax*(by-ey)+bx*(ey-ay)+ex*(ay-by));
+  if (Math.abs(D)<1e-10) return `M${cx+p1[0]*R},${cy+p1[1]*R} L${cx+p2[0]*R},${cy+p2[1]*R}`;
+  const ux=((ax*ax+ay*ay)*(by-ey)+(bx*bx+by*by)*(ey-ay)+(ex*ex+ey*ey)*(ay-by))/D;
+  const uy=((ax*ax+ay*ay)*(ex-bx)+(bx*bx+by*by)*(ax-ex)+(ex*ex+ey*ey)*(bx-ax))/D;
+  const arcR=Math.hypot(ax-ux,ay-uy)*R;
+  const sweep=((p1[0]-ux)*(p2[1]-uy)-(p1[1]-uy)*(p2[0]-ux))>0?1:0;
+  return `M${cx+p1[0]*R},${cy+p1[1]*R} A${arcR},${arcR} 0 0 ${sweep} ${cx+p2[0]*R},${cy+p2[1]*R}`;
+}
+
+function _pdCanvasDims(){
+  const svg=$('pd-svg');
+  const W=(svg&&svg.clientWidth)||window.innerWidth;
+  const H=(svg&&svg.clientHeight)||window.innerHeight;
+  const detailEl=$('pd-detail');
+  const detailH=(detailEl&&detailEl.classList.contains('open'))?(detailEl.offsetHeight||0):0;
+  const visH=H-detailH;
+  const R=Math.min(W,visH)*0.47*_pdZoom,cx=W/2,cy=visH/2;
+  return{W,H,R,cx,cy};
+}
+
+function _pdEnsureSVGStructure(svg,W,H){
+  // One-time setup of persistent SVG groups — never wipe the whole SVG
+  if(!svg.querySelector('#pd-bg')){
+    const ns='http://www.w3.org/2000/svg';
+    const bg=document.createElementNS(ns,'g');bg.id='pd-bg';svg.appendChild(bg);
+    const ed=document.createElementNS(ns,'g');ed.id='pd-edges';svg.appendChild(ed);
+    const nd=document.createElementNS(ns,'g');nd.id='pd-nodes-svg';svg.appendChild(nd);
+  }
+}
+
+function renderPoincareGraph(){
+  const svg=$('pd-svg');
+  if(!svg||pdState.positions.size===0)return;
+  const{W,H,R,cx,cy}=_pdCanvasDims();
+  pdState.diskCx=cx;pdState.diskCy=cy;pdState.diskR=R;pdState.diskW=W;pdState.diskH=H;
+  svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.setAttribute('width',W);svg.setAttribute('height',H);
+  _pdEnsureSVGStructure(svg,W,H);
+  // Update background (boundary, glow, hover-ring) — never touches nodes
+  const bg=$('pd-bg');
+  bg.innerHTML=
+    `<circle cx="${cx}" cy="${cy}" r="${R}" class="pd-boundary"/>` +
+    `<circle cx="${cx}" cy="${cy}" r="${R*0.07}" class="pd-center-glow" stroke-width="2"/>` +
+    `<circle id="pd-hover-ring" cx="0" cy="0" r="0" fill="none" stroke="var(--accent)" stroke-width="2" stroke-opacity="0.8" style="display:none"/>`;
+  // Update edges
+  const top5=new Set(pdState.topSimilar);
+  let edgeHtml='';
+  for(const tid of top5){
+    const p1=pdState.positions.get(pdState.centerId),p2=pdState.positions.get(tid);
+    if(!p1||!p2)continue;
+    const path=geodesicPath(p1,p2,cx,cy,R);if(!path)continue;
+    const op=Math.max(0.04,0.25*(1-cAbs(p2)*0.8)).toFixed(2);
+    edgeHtml+=`<path d="${path}" class="pd-edge" data-source="${pdState.centerId}" data-target="${tid}" stroke="var(--accent)" stroke-opacity="${op}" stroke-width="1"/>`;
+  }
+  $('pd-edges').innerHTML=edgeHtml;
+  // Render nodes (GL or SVG fallback) — nodes group is never wiped by this function
+  pdGLRender(pdState.positions,cx,cy,R,W,H);
+}
+
+
+
+// Reverse animation for going back: animate old center flying outward (away from us)
+function pdAnimateBack(prevCenterId, oldPositions) {
+  return new Promise(resolve => {
+    if (!pdState.diskR) { const d=_pdCanvasDims(); pdState.diskCx=d.cx;pdState.diskCy=d.cy;pdState.diskR=d.R;pdState.diskW=d.W;pdState.diskH=d.H; }
+    const {diskCx:cx,diskCy:cy,diskR:R,diskW:W,diskH:H} = pdState;
+    // In new layout, where is the old center?
+    // It should be in pdState.positions (it's a neighbor of prevCenter's prev)
+    // If not, just resolve immediately
+    const oldCenterInNew = pdState.positions.get(prevCenterId) || pdState.positions.get(pdState.centerId);
+    if (!oldCenterInNew) { resolve(); return; }
+    // Animate: push the disk so old center flies toward the edge (reverse of forward fly)
+    const target = cNeg(oldCenterInNew); // push in opposite direction
+    const atanhR = Math.atanh(Math.min(cAbs(target), 0.999));
+    const dur = 500, t0 = performance.now();
+    function frame(now) {
+      const t = Math.min((now - t0) / dur, 1);
+      const et = t < 0.5 ? 2*t*t : 1 - Math.pow(-2*t+2,2)/2;
+      const r = Math.tanh(et * atanhR);
+      const a = cScale(target, r / cAbs(target));
+      const np = new Map();
+      for (const [id, pos] of oldPositions) np.set(id, mobiusTransform(pos, a));
+      pdGLRender(np, cx, cy, R, W, H);
+      if (t < 1) { pdState.animRAF = requestAnimationFrame(frame); }
+      else {
+        pdState.animRAF = null;
+        // Set _mobiusEnd to the pushed state so pdSettleIntoLayout blends into new layout
+        pdState._mobiusEnd = new Map();
+        for (const [id, pos] of oldPositions) pdState._mobiusEnd.set(id, mobiusTransform(pos, target));
+        resolve();
+      }
+    }
+    if (pdState.animRAF) cancelAnimationFrame(pdState.animRAF);
+    pdState.animRAF = requestAnimationFrame(frame);
+  });
+}
+
+function pdAnimateToNode(targetId){
+  return new Promise(resolve=>{
+    const target=pdState.positions.get(targetId);
+    if(!target||cAbs(target)<0.001){resolve();return;}
+    // ensure dims are populated
+    if(!pdState.diskR){const d=_pdCanvasDims();pdState.diskCx=d.cx;pdState.diskCy=d.cy;pdState.diskR=d.R;pdState.diskW=d.W;pdState.diskH=d.H;}
+    const{diskCx:cx,diskCy:cy,diskR:R,diskW:W,diskH:H}=pdState;
+    const atanhR=Math.atanh(Math.min(cAbs(target),0.999));
+    const dur=500,t0=performance.now();
+    const oldPos=new Map(pdState.positions);
+    function frame(now){
+      const t=Math.min((now-t0)/dur,1);
+      const et=t<0.5?2*t*t:1-Math.pow(-2*t+2,2)/2;
+      const r=Math.tanh(et*atanhR);
+      const a=cScale(target,r/cAbs(target));
+      const np=new Map();
+      for(const[id,pos]of oldPos)np.set(id,mobiusTransform(pos,a));
+      pdGLRender(np,cx,cy,R,W,H);
+      if(t<1){pdState.animRAF=requestAnimationFrame(frame);}
+      else{
+        pdState.animRAF=null;
+        pdState._mobiusEnd=new Map();
+        for(const[id,pos]of oldPos)pdState._mobiusEnd.set(id,mobiusTransform(pos,target));
+        resolve();
+      }
+    }
+    if(pdState.animRAF)cancelAnimationFrame(pdState.animRAF);
+    pdState.animRAF=requestAnimationFrame(frame);
+  });
+}
+
+function pdSettleIntoLayout(){
+  return new Promise(resolve=>{
+    const mEnd=pdState._mobiusEnd;
+    if(!mEnd||mEnd.size===0){renderPoincareGraph();resolve();return;}
+    const{diskCx:cx,diskCy:cy,diskR:R,diskW:W,diskH:H}=pdState;
+    const dur=350,s0=performance.now();
+    function settle(now){
+      const st=Math.min((now-s0)/dur,1);
+      const se=st*st*(3-2*st);
+      const blended=new Map();
+      for(const[id,clean]of pdState.positions){
+        const end=mEnd.get(id);
+        if(end){blended.set(id,[end[0]+(clean[0]-end[0])*se,end[1]+(clean[1]-end[1])*se]);}
+        else blended.set(id,clean);
+      }
+      pdGLRender(blended,cx,cy,R,W,H);
+      if(st<1){pdState.animRAF=requestAnimationFrame(settle);}
+      else{pdState.animRAF=null;pdState._mobiusEnd=null;renderPoincareGraph();resolve();}
+    }
+    pdState.animRAF=requestAnimationFrame(settle);
+  });
+}
+
+function _pdRenderBlended(blended,cx,cy,R){pdGLRender(blended,cx,cy,R);}
+
+function renderPdDetail(id){
+  const node=_pdNodeMap[id]; if(!node) return;
+  const img=$('pd-detail-img');
+  img.style.backgroundImage=node.thumbnail_path?`url(${thumbUrl(node.thumbnail_path)})`:'';
+  img.style.display=node.thumbnail_path?'':'none';
+  $('pd-detail-date').textContent=(node.taken_at||'').slice(0,10);
+  $('pd-detail-label').textContent=node.label||node.taken_at||'';
+  $('pd-detail-caption').textContent=node.caption||'';
+  $('pd-detail').classList.add('open');
+}
+function hidePdDetail(){ $('pd-detail').classList.remove('open'); requestAnimationFrame(() => renderPoincareGraph()); }
+
+function renderPdNav(){
+  $('pd-back').disabled=pdHistory.length===0;
+  const recent=pdHistory.slice(-3);
+  const crumbs=recent.map((h,i)=>{
+    const idx=pdHistory.length-recent.length+i;
+    return `<span class="pd-crumb" data-idx="${idx}" style="cursor:pointer;color:var(--accent)">${escHtml((h.label||'').slice(0,20))}</span>`;
+  }).join(' \u203a ');
+  const center=_pdNodeMap[pdState.centerId];
+  $('pd-breadcrumb').innerHTML=crumbs+(crumbs?' \u203a ':'')+
+    `<strong>${escHtml((center&&(center.label||center.taken_at)||'').slice(0,30))}</strong>`;
+  $('pd-breadcrumb').querySelectorAll('.pd-crumb').forEach(el=>{
+    el.addEventListener('click',()=>{
+      const idx=parseInt(el.dataset.idx);
+      const entry=pdHistory[idx];
+      if(entry){pdHistory.splice(idx);enterPoincareView(entry.id, { isBack: true });}
+    });
+  });
+}
+
+function pdGoBack(){
+  if(!pdHistory.length) return;
+  const prev=pdHistory.pop();
+  enterPoincareView(prev.id, { isBack: true });
+}
+
+function escHtml(s){
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+</script>
+</body>
+</html>
