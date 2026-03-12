@@ -1153,7 +1153,6 @@ function _ballFrame() {
   const container=$('view-ball');
   const W=container.clientWidth, H=container.clientHeight;
 
-  const visible=[];
   for(const nd of _ballNodes) {
     const wx=nd.wx-_bcam[0], wy=nd.wy-_bcam[1], wz=nd.wz-_bcam[2];
     const vx=r0*wx+r1*wy+r2*wz;
@@ -1166,26 +1165,19 @@ function _ballFrame() {
     const sx=(vx*BALL_FOV*iz+0.5)*W;
     const sy=(-vy*BALL_FOV*iz+0.5)*H;
     const csz=Math.min(BALL_MAX_SZ,size);
-    nd._px=sx; nd._py=sy; nd._psz=csz; nd._pvz=vz;
-    visible.push(nd);
-  }
-
-  visible.sort((a,b)=>a._pvz-b._pvz);
-  const n=visible.length;
-  for(let i=0;i<n;i++) {
-    const nd=visible[i];
-    const {_px:sx,_py:sy,_psz:size,_pvz:vz}=nd;
+    // z-index from depth — no sort needed
+    const zi=Math.round((-vz)*100);
     const bright=+(Math.min(1, 0.2+0.8/((-vz)*0.5+0.5))).toFixed(2);
-    const l=Math.round(sx-size/2), t=Math.round(sy-size/2), s=Math.round(size);
+    const l=Math.round(sx-csz/2), t=Math.round(sy-csz/2), s=Math.round(csz);
     const el=nd.el;
     if(nd._lsz===0) el.style.display='block';
-    if(nd._lx!==l||nd._ly!==t||nd._lsz!==s) {
+    if(nd._lx!==l||nd._ly!==t||nd._lsz!==s){
       el.style.left=l+'px'; el.style.top=t+'px';
       el.style.width=s+'px'; el.style.height=s+'px';
       nd._lx=l; nd._ly=t; nd._lsz=s;
     }
-    if(nd._lz!==i){el.style.zIndex=i;nd._lz=i;}
-    if(nd._lb!==bright){el.style.filter='brightness('+bright+')';nd._lb=bright;}
+    if(nd._lz!==zi){el.style.zIndex=zi; nd._lz=zi;}
+    if(nd._lb!==bright){el.style.filter='brightness('+bright+')'; nd._lb=bright;}
   }
   _ballRafId=requestAnimationFrame(_ballFrame);
 }
