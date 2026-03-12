@@ -1000,22 +1000,28 @@ $('ball-btn').addEventListener('click', () => {
 let _ballNodes    = [];
 let _ballYaw      = 0;
 let _ballPitch    = 0;
+let _ballCamX     = 0;  // camera position in world space
+let _ballCamY     = 0;
+let _ballCamZ     = 0;
 let _ballRafId    = null;
 let _ballRafOn    = false;
 const BALL_FOV    = 1.8;
-const BALL_NEAR   = 0.05;
+const BALL_NEAR   = 0.01;
 const BALL_MAX_SZ = 200;
-const BALL_MIN_SZ = 8;   // cull below this — saves DOM work
+const BALL_MIN_SZ = 8;
 const BALL_SCALE  = 1.4;
 
-// Joystick state — which buttons are held
+// Joystick state
 const _bjHeld = {N:false, S:false, E:false, W:false, fwd:false};
-const BALL_TURN_SPD = 0.03;  // rad/frame for arrow buttons
-const BALL_FLY_SPD  = 0.008; // auto-rotate speed when fwd held
+const BALL_TURN_SPD = 0.03;   // rad/frame
+const BALL_FLY_SPD  = 0.012;  // world units/frame forward
 
 function pauseBallView() {
   if (_ballRafId) { cancelAnimationFrame(_ballRafId); _ballRafId = null; }
   _ballRafOn = false;
+  // Reset camera on exit so re-entry starts fresh
+  _ballCamX = _ballCamY = _ballCamZ = 0;
+  _ballYaw = _ballPitch = 0;
 }
 
 function _ballJoystickEvents() {
@@ -1145,7 +1151,7 @@ async function initBallView() {
     window.addEventListener('mousemove', e => {
       if(!_drag||_currentView!=='ball') return;
       _ballYaw   += (e.clientX-_lx)*0.005; _lx=e.clientX;
-      _ballPitch += (e.clientY-_ly)*0.005; _ly=e.clientY;
+      _ballPitch -= (e.clientY-_ly)*0.005; _ly=e.clientY;  // drag up = look up
       _ballPitch  = Math.max(-1.4, Math.min(1.4, _ballPitch));
     });
     // Touch drag (outside joystick)
@@ -1158,7 +1164,7 @@ async function initBallView() {
     container.addEventListener('touchmove', e => {
       if(!_tdrag||_currentView!=='ball') return;
       _ballYaw   += (e.touches[0].clientX-_tlx)*0.005; _tlx=e.touches[0].clientX;
-      _ballPitch += (e.touches[0].clientY-_tly)*0.005; _tly=e.touches[0].clientY;
+      _ballPitch -= (e.touches[0].clientY-_tly)*0.005; _tly=e.touches[0].clientY;  // drag up = look up
       _ballPitch  = Math.max(-1.4, Math.min(1.4, _ballPitch));
     }, {passive:true});
   }
@@ -1177,12 +1183,24 @@ function _ballFrame() {
   if (!_ballRafOn) return;
 
   // Apply joystick input
-  if (_bjHeld.N) { _ballPitch -= BALL_TURN_SPD; }
-  if (_bjHeld.S) { _ballPitch += BALL_TURN_SPD; }
+  if (_bjHeld.N) { _ballPitch += BALL_TURN_SPD; }  // N = look up = pitch positive
+  if (_bjHeld.S) { _ballPitch -= BALL_TURN_SPD; }
   if (_bjHeld.W) { _ballYaw   -= BALL_TURN_SPD; }
   if (_bjHeld.E) { _ballYaw   += BALL_TURN_SPD; }
-  if (_bjHeld.fwd) { _ballYaw += BALL_FLY_SPD; }  // gentle auto-rotation
   _ballPitch = Math.max(-1.4, Math.min(1.4, _ballPitch));
+
+  if (_bjHeld.fwd) {
+    // Step forward along the view direction (column 2 of rotation matrix = -forward)
+    const cy=Math.cos(_ballYaw), sy=Math.sin(_ballYaw);
+    const cp=Math.cos(_ballPitch), sp=Math.sin(_ballPitch);
+    // forward vector in world = R * (0,0,-1) = third column negated
+    const fx = -(-sy*cp);  // = sy*cp
+    const fy = -(sp);
+    const fz = -(cy*cp);
+    _ballCamX += fx * BALL_FLY_SPD;
+    _ballCamY += fy * BALL_FLY_SPD;
+    _ballCamZ += fz * BALL_FLY_SPD;
+  }
 
   const container=$('view-ball');
   const W=container.clientWidth, H=container.clientHeight;
@@ -1191,9 +1209,11 @@ function _ballFrame() {
 
   const visible=[];
   for(const nd of _ballNodes) {
-    const vx=r0*nd.wx+r3*nd.wy+r6*nd.wz;
-    const vy=r1*nd.wx+r4*nd.wy+r7*nd.wz;
-    const vz=r2*nd.wx+r5*nd.wy+r8*nd.wz;
+    // translate node into camera-relative space
+    const wx=nd.wx-_ballCamX, wy=nd.wy-_ballCamY, wz=nd.wz-_ballCamZ;
+    const vx=r0*wx+r3*wy+r6*wz;
+    const vy=r1*wx+r4*wy+r7*wz;
+    const vz=r2*wx+r5*wy+r8*wz;
     if(vz>-BALL_NEAR){if(nd._lsz>0){nd.el.style.display='none';nd._lsz=0;}continue;}
     const iz=1.0/(-vz);
     const size=90*iz;
