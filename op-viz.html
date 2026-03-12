@@ -1016,7 +1016,7 @@ let _bup   = [0, 1, 0];     // up vector
 // Spline waypoints (generated from cluster centers)
 let _bWaypoints = [];  // [{x,y,z}]
 let _bSplineT = 0;     // global t across all segments
-const BALL_SPLINE_SPD = 0.0004;  // t units per frame — adjust for speed
+const BALL_SPLINE_SPD = 0.005;  // t units per frame
 
 // ── vector math ──
 function _v3sub(a,b){return[a[0]-b[0],a[1]-b[1],a[2]-b[2]];}
@@ -1131,16 +1131,14 @@ function _ballFrame() {
   // Advance spline
   _bSplineT += BALL_SPLINE_SPD;
 
-  // Camera position: slightly behind spline point
+  // Camera position: snap directly to spline (no lag = no jitter)
   const pos  = _splinePos(_bSplineT);
-  const posA = _splinePos(_bSplineT + 0.01); // lookahead
+  const posA = _splinePos(_bSplineT + 0.02); // lookahead for tangent
+  _bcam = pos;
 
-  // Smooth camera position
-  _bcam = _v3lerp(_bcam, pos, 0.05);
-
-  // Smooth look direction toward lookahead
-  const rawLook = _v3norm(_v3sub(posA, _bcam));
-  _blook = _v3norm(_v3lerp(_blook, rawLook, 0.04));
+  // Look direction from spline tangent — lerp only to smooth waypoint corners
+  const tangent = _v3norm(_v3sub(posA, pos));
+  _blook = _v3norm(_v3lerp(_blook, tangent, 0.06));
 
   // Compute view matrix from cam + look + up
   const fwd   = _blook;
