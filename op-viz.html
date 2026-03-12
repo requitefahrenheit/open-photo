@@ -775,6 +775,22 @@ body::before {
   <!-- Ball (3D) -->
   <div class="view" id="view-ball" style="position:absolute;inset:0;background:#000;overflow:hidden;">
     <div id="ball-loading" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;color:rgba(255,255,255,0.4);font-size:14px;font-family:var(--font);"><div class="spinner"></div><div>loading…</div></div>
+    <!-- Joystick overlay -->
+    <div id="ball-joystick" style="position:absolute;bottom:32px;right:28px;width:120px;height:120px;touch-action:none;user-select:none;">
+      <svg viewBox="0 0 120 120" width="120" height="120" style="position:absolute;inset:0;opacity:0.55;">
+        <!-- N -->
+        <polygon id="bjN" points="60,4 50,28 70,28" fill="#fff"/>
+        <!-- S -->
+        <polygon id="bjS" points="60,116 50,92 70,92" fill="#fff"/>
+        <!-- W -->
+        <polygon id="bjW" points="4,60 28,50 28,70" fill="#fff"/>
+        <!-- E -->
+        <polygon id="bjE" points="116,60 92,50 92,70" fill="#fff"/>
+        <!-- Center forward circle -->
+        <circle id="bjFwd" cx="60" cy="60" r="18" fill="none" stroke="#fff" stroke-width="2"/>
+        <circle cx="60" cy="60" r="6" fill="#fff"/>
+      </svg>
+    </div>
   </div>
 
   <!-- Map -->
@@ -988,21 +1004,96 @@ let _ballRafId    = null;
 let _ballRafOn    = false;
 const BALL_FOV    = 1.8;
 const BALL_NEAR   = 0.05;
-const BALL_MAX_SZ = 220;
-const BALL_MIN_SZ = 6;
+const BALL_MAX_SZ = 200;
+const BALL_MIN_SZ = 8;   // cull below this — saves DOM work
 const BALL_SCALE  = 1.4;
+
+// Joystick state — which buttons are held
+const _bjHeld = {N:false, S:false, E:false, W:false, fwd:false};
+const BALL_TURN_SPD = 0.03;  // rad/frame for arrow buttons
+const BALL_FLY_SPD  = 0.008; // auto-rotate speed when fwd held
 
 function pauseBallView() {
   if (_ballRafId) { cancelAnimationFrame(_ballRafId); _ballRafId = null; }
   _ballRafOn = false;
 }
 
+function _ballJoystickEvents() {
+  // Highlight helper
+  function setActive(id, on) {
+    const el = document.getElementById(id);
+    if (el) el.style.opacity = on ? '1' : '1';
+    if (el) el.setAttribute('fill', on ? '#6cf' : '#fff');
+  }
+  function press(dir, on) {
+    _bjHeld[dir] = on;
+    const idMap = {N:'bjN', S:'bjS', W:'bjW', E:'bjE', fwd:'bjFwd'};
+    const el = document.getElementById(idMap[dir]);
+    if (!el) return;
+    if (dir === 'fwd') {
+      el.setAttribute('stroke', on ? '#6cf' : '#fff');
+      document.getElementById('bjFwd')?.nextElementSibling && (document.querySelector('#ball-joystick circle:last-child').setAttribute('fill', on ? '#6cf' : '#fff'));
+    } else {
+      el.setAttribute('fill', on ? '#6cf' : '#fff');
+    }
+  }
+
+  // Hit test: which zone of 120x120 SVG was tapped?
+  function zoneOf(x, y) {
+    const cx=60, cy=60, r=22;
+    const dx=x-cx, dy=y-cy;
+    if (dx*dx+dy*dy < r*r) return 'fwd';
+    if (Math.abs(dy) > Math.abs(dx)) return dy < 0 ? 'N' : 'S';
+    return dx < 0 ? 'W' : 'E';
+  }
+
+  const joy = $('ball-joystick');
+  if (!joy || joy._bjReady) return;
+  joy._bjReady = true;
+
+  // Touch — support holding
+  const _touches = {};
+  joy.addEventListener('touchstart', e => {
+    e.preventDefault();
+    const rect = joy.getBoundingClientRect();
+    for (const t of e.changedTouches) {
+      const x = (t.clientX - rect.left) * 120 / rect.width;
+      const y = (t.clientY - rect.top)  * 120 / rect.height;
+      const z = zoneOf(x, y);
+      _touches[t.identifier] = z;
+      press(z, true);
+    }
+  }, {passive:false});
+  joy.addEventListener('touchend', e => {
+    e.preventDefault();
+    for (const t of e.changedTouches) {
+      const z = _touches[t.identifier];
+      if (z) { press(z, false); delete _touches[t.identifier]; }
+    }
+  }, {passive:false});
+  joy.addEventListener('touchcancel', e => {
+    for (const t of e.changedTouches) {
+      const z = _touches[t.identifier];
+      if (z) { press(z, false); delete _touches[t.identifier]; }
+    }
+  });
+
+  // Mouse fallback
+  let _mzone = null;
+  joy.addEventListener('mousedown', e => {
+    const rect = joy.getBoundingClientRect();
+    const x = (e.clientX - rect.left) * 120 / rect.width;
+    const y = (e.clientY - rect.top)  * 120 / rect.height;
+    _mzone = zoneOf(x, y);
+    press(_mzone, true);
+  });
+  window.addEventListener('mouseup', () => { if (_mzone) { press(_mzone, false); _mzone=null; } });
+}
+
 async function initBallView() {
-  console.log('[ball] initBallView called, nodes:', _ballNodes.length);
   const container = $('view-ball');
   if (_ballNodes.length === 0) {
     $('ball-loading').style.display = 'flex';
-    console.log('[ball] fetching layout...');
     let layout, photos;
     try {
       [layout, photos] = await Promise.all([
@@ -1010,15 +1101,12 @@ async function initBallView() {
         api('/api/photos')
       ]);
     } catch(e) {
-      console.error('[ball] fetch failed:', e);
       $('ball-loading').querySelector('div:last-child').textContent = 'load failed';
       return;
     }
-    console.log('[ball] layout keys:', layout && Object.keys(layout));
     const photoMap = {};
     for (const p of (photos.nodes || [])) photoMap[p.id] = p;
     const entries = Object.entries(layout.positions || {});
-    console.log('[ball] entries:', entries.length);
     let maxR = 0;
     const raw = entries.map(([id,[x,y,z]]) => {
       const cx=x*2-1, cy=y*2-1, cz=z*2-1;
@@ -1027,44 +1115,56 @@ async function initBallView() {
       return {id,cx,cy,cz,r,thumb:photoMap[id]?.thumbnail_path||null};
     });
     maxR = maxR||1;
+    // Build fragment — single DOM insert
     container.querySelectorAll('.ball-tile').forEach(e=>e.remove());
+    const frag = document.createDocumentFragment();
     _ballNodes = raw.map(({id,cx,cy,cz,r,thumb}) => {
       const sc = BALL_SCALE*(0.35+0.65*r/maxR);
       const norm=r||1;
       const wx=cx/norm*sc, wy=cy/norm*sc, wz=cz/norm*sc;
       const el=document.createElement('div');
       el.className='ball-tile';
-      el.style.cssText='position:absolute;background-size:cover;background-position:center;background-color:#1a1a1a;border-radius:2px;will-change:left,top,width,height;cursor:pointer;display:none;';
+      el.style.cssText='position:absolute;background-size:cover;background-position:center;background-color:#222;border-radius:2px;display:none;';
       if(thumb) el.style.backgroundImage=`url(${thumbUrl(thumb)})`;
-      container.appendChild(el);
-      return {id,wx,wy,wz,el,_p:null};
+      frag.appendChild(el);
+      return {id,wx,wy,wz,el,_lx:-9999,_ly:-9999,_lsz:0,_lz:-1,_lb:-1};
     });
+    container.insertBefore(frag, $('ball-joystick'));
     $('ball-loading').style.display='none';
-    console.log('[ball] nodes built:', _ballNodes.length);
   }
-  // Drag to look
+
+  // Drag-to-look (desktop)
   if (!container._ballEventsAdded) {
     container._ballEventsAdded = true;
     let _drag=false, _lx=0, _ly=0;
-    container.addEventListener('mousedown', e => { _drag=true; _lx=e.clientX; _ly=e.clientY; });
+    container.addEventListener('mousedown', e => {
+      if (e.target.closest('#ball-joystick')) return;
+      _drag=true; _lx=e.clientX; _ly=e.clientY;
+    });
     window.addEventListener('mouseup', () => _drag=false);
     window.addEventListener('mousemove', e => {
       if(!_drag||_currentView!=='ball') return;
       _ballYaw   += (e.clientX-_lx)*0.005; _lx=e.clientX;
       _ballPitch += (e.clientY-_ly)*0.005; _ly=e.clientY;
-      _ballPitch = Math.max(-1.4, Math.min(1.4, _ballPitch));
+      _ballPitch  = Math.max(-1.4, Math.min(1.4, _ballPitch));
     });
-    container.addEventListener('touchstart', e => { _drag=true; _lx=e.touches[0].clientX; _ly=e.touches[0].clientY; }, {passive:true});
-    container.addEventListener('touchend', () => _drag=false);
+    // Touch drag (outside joystick)
+    let _tdrag=false, _tlx=0, _tly=0;
+    container.addEventListener('touchstart', e => {
+      if (e.target.closest('#ball-joystick')) return;
+      _tdrag=true; _tlx=e.touches[0].clientX; _tly=e.touches[0].clientY;
+    }, {passive:true});
+    container.addEventListener('touchend', () => _tdrag=false, {passive:true});
     container.addEventListener('touchmove', e => {
-      if(_currentView!=='ball') return;
-      _ballYaw   += (e.touches[0].clientX-_lx)*0.005; _lx=e.touches[0].clientX;
-      _ballPitch += (e.touches[0].clientY-_ly)*0.005; _ly=e.touches[0].clientY;
-      _ballPitch = Math.max(-1.4, Math.min(1.4, _ballPitch));
+      if(!_tdrag||_currentView!=='ball') return;
+      _ballYaw   += (e.touches[0].clientX-_tlx)*0.005; _tlx=e.touches[0].clientX;
+      _ballPitch += (e.touches[0].clientY-_tly)*0.005; _tly=e.touches[0].clientY;
+      _ballPitch  = Math.max(-1.4, Math.min(1.4, _ballPitch));
     }, {passive:true});
   }
+
+  _ballJoystickEvents();
   if (!_ballRafOn) { _ballRafOn=true; _ballFrame(); }
-  console.log('[ball] rAF started');
 }
 
 function _ballRotMat() {
@@ -1073,43 +1173,60 @@ function _ballRotMat() {
   return [cy,0,sy, sy*sp,cp,-cy*sp, -sy*cp,sp,cy*cp];
 }
 
-function _ballProject(wx,wy,wz,R,W,H) {
-  const [r0,r1,r2,r3,r4,r5,r6,r7,r8]=R;
-  const vx=r0*wx+r3*wy+r6*wz;
-  const vy=r1*wx+r4*wy+r7*wz;
-  const vz=r2*wx+r5*wy+r8*wz;
-  if(vz>-BALL_NEAR) return null;
-  const iz=1.0/(-vz);
-  const sx=(vx*BALL_FOV*iz+0.5)*W;
-  const sy=(-vy*BALL_FOV*iz+0.5)*H;
-  const size=Math.max(BALL_MIN_SZ,Math.min(BALL_MAX_SZ,90*iz));
-  return {sx,sy,size,vz};
-}
-
 function _ballFrame() {
   if (!_ballRafOn) return;
+
+  // Apply joystick input
+  if (_bjHeld.N) { _ballPitch -= BALL_TURN_SPD; }
+  if (_bjHeld.S) { _ballPitch += BALL_TURN_SPD; }
+  if (_bjHeld.W) { _ballYaw   -= BALL_TURN_SPD; }
+  if (_bjHeld.E) { _ballYaw   += BALL_TURN_SPD; }
+  if (_bjHeld.fwd) { _ballYaw += BALL_FLY_SPD; }  // gentle auto-rotation
+  _ballPitch = Math.max(-1.4, Math.min(1.4, _ballPitch));
+
   const container=$('view-ball');
   const W=container.clientWidth, H=container.clientHeight;
   const R=_ballRotMat();
+  const [r0,r1,r2,r3,r4,r5,r6,r7,r8]=R;
+
   const visible=[];
   for(const nd of _ballNodes) {
-    const p=_ballProject(nd.wx,nd.wy,nd.wz,R,W,H);
-    if(!p){nd.el.style.display='none';nd._p=null;continue;}
-    nd._p=p; visible.push(nd);
+    const vx=r0*nd.wx+r3*nd.wy+r6*nd.wz;
+    const vy=r1*nd.wx+r4*nd.wy+r7*nd.wz;
+    const vz=r2*nd.wx+r5*nd.wy+r8*nd.wz;
+    if(vz>-BALL_NEAR){if(nd._lsz>0){nd.el.style.display='none';nd._lsz=0;}continue;}
+    const iz=1.0/(-vz);
+    const size=90*iz;
+    if(size<BALL_MIN_SZ){if(nd._lsz>0){nd.el.style.display='none';nd._lsz=0;}continue;}
+    const sx=(vx*BALL_FOV*iz+0.5)*W;
+    const sy=(-vy*BALL_FOV*iz+0.5)*H;
+    const csz=Math.min(BALL_MAX_SZ,size);
+    nd._px=sx; nd._py=sy; nd._psz=csz; nd._pvz=vz;
+    visible.push(nd);
   }
-  visible.sort((a,b)=>a._p.vz-b._p.vz);
+
+  // Sort back-to-front
+  visible.sort((a,b)=>a._pvz-b._pvz);
+
   const n=visible.length;
   for(let i=0;i<n;i++) {
     const nd=visible[i];
-    const {sx,sy,size,vz}=nd._p;
-    const bright=Math.min(1, 0.15+0.85/((-vz)*0.4+0.4));
-    nd.el.style.display='block';
-    nd.el.style.width=size+'px';
-    nd.el.style.height=size+'px';
-    nd.el.style.left=(sx-size/2)+'px';
-    nd.el.style.top=(sy-size/2)+'px';
-    nd.el.style.zIndex=i;
-    nd.el.style.filter=`brightness(${bright.toFixed(2)})`;
+    const {_px:sx,_py:sy,_psz:size,_pvz:vz}=nd;
+    const bright=+(Math.min(1, 0.15+0.85/((-vz)*0.4+0.4))).toFixed(2);
+    const l=Math.round(sx-size/2), t=Math.round(sy-size/2), s=Math.round(size);
+    // Only write style props that changed
+    const el=nd.el;
+    if(nd._lsz===0) el.style.display='block';
+    if(nd._lx!==l||nd._ly!==t||nd._lsz!==s) {
+      el.style.cssText=el.style.cssText; // no-op trick — just set individually:
+      el.style.left=l+'px';
+      el.style.top=t+'px';
+      el.style.width=s+'px';
+      el.style.height=s+'px';
+      nd._lx=l; nd._ly=t; nd._lsz=s;
+    }
+    if(nd._lz!==i){el.style.zIndex=i;nd._lz=i;}
+    if(nd._lb!==bright){el.style.filter='brightness('+bright+')';nd._lb=bright;}
   }
   _ballRafId=requestAnimationFrame(_ballFrame);
 }
