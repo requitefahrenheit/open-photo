@@ -997,31 +997,78 @@ $('ball-btn').addEventListener('click', () => {
 // ─────────────────────────────────────────────
 // Ball View (3D — DOM projection)
 // ─────────────────────────────────────────────
-let _ballNodes    = [];
-let _ballYaw      = 0;
-let _ballPitch    = 0;
-let _ballCamX     = 0;  // camera position in world space
-let _ballCamY     = 0;
-let _ballCamZ     = 0;
-let _ballRafId    = null;
-let _ballRafOn    = false;
+let _ballNodes = [];
+let _ballRafId = null;
+let _ballRafOn = false;
 const BALL_FOV    = 1.8;
 const BALL_NEAR   = 0.01;
 const BALL_MAX_SZ = 200;
 const BALL_MIN_SZ = 8;
 const BALL_SCALE  = 1.4;
 
+// Camera as quaternion + position — no gimbal lock
+let _bq = [1,0,0,0];  // [w,x,y,z]
+let _bcam = [0,0,0];  // world-space position
+
+const BALL_TURN_SPD = 0.03;
+const BALL_FLY_SPD  = 0.015;
+
 // Joystick state
 const _bjHeld = {N:false, S:false, E:false, W:false, fwd:false};
-const BALL_TURN_SPD = 0.03;   // rad/frame
-const BALL_FLY_SPD  = 0.012;  // world units/frame forward
+
+// Quaternion helpers
+function _qmul(a, b) {
+  return [
+    a[0]*b[0] - a[1]*b[1] - a[2]*b[2] - a[3]*b[3],
+    a[0]*b[1] + a[1]*b[0] + a[2]*b[3] - a[3]*b[2],
+    a[0]*b[2] - a[1]*b[3] + a[2]*b[0] + a[3]*b[1],
+    a[0]*b[3] + a[1]*b[2] - a[2]*b[1] + a[3]*b[0]
+  ];
+}
+function _qnorm(q) {
+  const l = Math.sqrt(q[0]*q[0]+q[1]*q[1]+q[2]*q[2]+q[3]*q[3])||1;
+  return [q[0]/l,q[1]/l,q[2]/l,q[3]/l];
+}
+function _qrot(axis, angle) {  // axis=[x,y,z] normalized, angle rad
+  const s = Math.sin(angle/2);
+  return [Math.cos(angle/2), axis[0]*s, axis[1]*s, axis[2]*s];
+}
+// Convert quaternion to 3x3 rotation matrix (row-major flat [9])
+function _qmat(q) {
+  const [w,x,y,z] = q;
+  return [
+    1-2*(y*y+z*z),   2*(x*y-w*z),   2*(x*z+w*y),
+      2*(x*y+w*z), 1-2*(x*x+z*z),   2*(y*z-w*x),
+      2*(x*z-w*y),   2*(y*z+w*x), 1-2*(x*x+y*y)
+  ];
+}
+// Apply rotation matrix to vector
+function _mv(M, v) {
+  return [
+    M[0]*v[0]+M[1]*v[1]+M[2]*v[2],
+    M[3]*v[0]+M[4]*v[1]+M[5]*v[2],
+    M[6]*v[0]+M[7]*v[1]+M[8]*v[2]
+  ];
+}
+// Rotate camera by delta screen pixels — trackball style
+function _trackballRotate(dx, dy, W, H) {
+  // Map dx/dy to rotation axes in camera space, then to world space
+  const M = _qmat(_bq);
+  // Right = M row 0, Up = M row 1
+  const right = [M[0], M[1], M[2]];
+  const up    = [M[3], M[4], M[5]];
+  const speed = 3.0 / Math.max(W, H);
+  // yaw: rotate around world-up (or camera-up to avoid lock)
+  const qyaw   = _qrot(up,    -dx * speed);
+  const qpitch = _qrot(right,  dy * speed);
+  _bq = _qnorm(_qmul(_qmul(qyaw, qpitch), _bq));
+}
 
 function pauseBallView() {
   if (_ballRafId) { cancelAnimationFrame(_ballRafId); _ballRafId = null; }
   _ballRafOn = false;
-  // Reset camera on exit so re-entry starts fresh
-  _ballCamX = _ballCamY = _ballCamZ = 0;
-  _ballYaw = _ballPitch = 0;
+  _bq = [1,0,0,0];
+  _bcam = [0,0,0];
 }
 
 function _ballJoystickEvents() {
@@ -1139,9 +1186,10 @@ async function initBallView() {
     $('ball-loading').style.display='none';
   }
 
-  // Drag-to-look (desktop)
+  // Drag-to-look — trackball (desktop + touch)
   if (!container._ballEventsAdded) {
     container._ballEventsAdded = true;
+    const W = () => container.clientWidth, H = () => container.clientHeight;
     let _drag=false, _lx=0, _ly=0;
     container.addEventListener('mousedown', e => {
       if (e.target.closest('#ball-joystick')) return;
@@ -1150,11 +1198,9 @@ async function initBallView() {
     window.addEventListener('mouseup', () => _drag=false);
     window.addEventListener('mousemove', e => {
       if(!_drag||_currentView!=='ball') return;
-      _ballYaw   += (e.clientX-_lx)*0.005; _lx=e.clientX;
-      _ballPitch -= (e.clientY-_ly)*0.005; _ly=e.clientY;  // drag up = look up
-      _ballPitch  = Math.max(-1.4, Math.min(1.4, _ballPitch));
+      _trackballRotate(e.clientX-_lx, e.clientY-_ly, W(), H());
+      _lx=e.clientX; _ly=e.clientY;
     });
-    // Touch drag (outside joystick)
     let _tdrag=false, _tlx=0, _tly=0;
     container.addEventListener('touchstart', e => {
       if (e.target.closest('#ball-joystick')) return;
@@ -1163,9 +1209,8 @@ async function initBallView() {
     container.addEventListener('touchend', () => _tdrag=false, {passive:true});
     container.addEventListener('touchmove', e => {
       if(!_tdrag||_currentView!=='ball') return;
-      _ballYaw   += (e.touches[0].clientX-_tlx)*0.005; _tlx=e.touches[0].clientX;
-      _ballPitch -= (e.touches[0].clientY-_tly)*0.005; _tly=e.touches[0].clientY;  // drag up = look up
-      _ballPitch  = Math.max(-1.4, Math.min(1.4, _ballPitch));
+      _trackballRotate(e.touches[0].clientX-_tlx, e.touches[0].clientY-_tly, W(), H());
+      _tlx=e.touches[0].clientX; _tly=e.touches[0].clientY;
     }, {passive:true});
   }
 
@@ -1173,47 +1218,42 @@ async function initBallView() {
   if (!_ballRafOn) { _ballRafOn=true; _ballFrame(); }
 }
 
-function _ballRotMat() {
-  const cy=Math.cos(_ballYaw), sy=Math.sin(_ballYaw);
-  const cp=Math.cos(_ballPitch), sp=Math.sin(_ballPitch);
-  return [cy,0,sy, sy*sp,cp,-cy*sp, -sy*cp,sp,cy*cp];
-}
-
 function _ballFrame() {
   if (!_ballRafOn) return;
 
-  // Apply joystick input
-  if (_bjHeld.N) { _ballPitch += BALL_TURN_SPD; }  // N = look up = pitch positive
-  if (_bjHeld.S) { _ballPitch -= BALL_TURN_SPD; }
-  if (_bjHeld.W) { _ballYaw   -= BALL_TURN_SPD; }
-  if (_bjHeld.E) { _ballYaw   += BALL_TURN_SPD; }
-  _ballPitch = Math.max(-1.4, Math.min(1.4, _ballPitch));
+  // Joystick: rotate via trackball axes
+  const M0 = _qmat(_bq);
+  const right = [M0[0], M0[1], M0[2]];
+  const up    = [M0[3], M0[4], M0[5]];
+  if (_bjHeld.N) _bq = _qnorm(_qmul(_qrot(right,  BALL_TURN_SPD), _bq));
+  if (_bjHeld.S) _bq = _qnorm(_qmul(_qrot(right, -BALL_TURN_SPD), _bq));
+  if (_bjHeld.W) _bq = _qnorm(_qmul(_qrot(up,    -BALL_TURN_SPD), _bq));
+  if (_bjHeld.E) _bq = _qnorm(_qmul(_qrot(up,     BALL_TURN_SPD), _bq));
 
   if (_bjHeld.fwd) {
-    // Step forward along the view direction (column 2 of rotation matrix = -forward)
-    const cy=Math.cos(_ballYaw), sy=Math.sin(_ballYaw);
-    const cp=Math.cos(_ballPitch), sp=Math.sin(_ballPitch);
-    // forward vector in world = R * (0,0,-1) = third column negated
-    const fx = -(-sy*cp);  // = sy*cp
-    const fy = -(sp);
-    const fz = -(cy*cp);
-    _ballCamX += fx * BALL_FLY_SPD;
-    _ballCamY += fy * BALL_FLY_SPD;
-    _ballCamZ += fz * BALL_FLY_SPD;
+    // Forward = -Z axis in camera space = third row of M (world-from-camera)
+    // M = _qmat(_bq) maps camera→world, so camera -Z in world = -M row2
+    const M = _qmat(_bq);
+    _bcam[0] -= M[6] * BALL_FLY_SPD;
+    _bcam[1] -= M[7] * BALL_FLY_SPD;
+    _bcam[2] -= M[8] * BALL_FLY_SPD;
   }
 
   const container=$('view-ball');
   const W=container.clientWidth, H=container.clientHeight;
-  const R=_ballRotMat();
-  const [r0,r1,r2,r3,r4,r5,r6,r7,r8]=R;
+  // View matrix = transpose of rotation (R^T maps world→camera)
+  const M = _qmat(_bq);
+  // R^T rows = M columns
+  const r0=M[0],r1=M[3],r2=M[6];
+  const r3=M[1],r4=M[4],r5=M[7];
+  const r6=M[2],r7=M[5],r8=M[8];
 
   const visible=[];
   for(const nd of _ballNodes) {
-    // translate node into camera-relative space
-    const wx=nd.wx-_ballCamX, wy=nd.wy-_ballCamY, wz=nd.wz-_ballCamZ;
-    const vx=r0*wx+r3*wy+r6*wz;
-    const vy=r1*wx+r4*wy+r7*wz;
-    const vz=r2*wx+r5*wy+r8*wz;
+    const wx=nd.wx-_bcam[0], wy=nd.wy-_bcam[1], wz=nd.wz-_bcam[2];
+    const vx=r0*wx+r1*wy+r2*wz;
+    const vy=r3*wx+r4*wy+r5*wz;
+    const vz=r6*wx+r7*wy+r8*wz;
     if(vz>-BALL_NEAR){if(nd._lsz>0){nd.el.style.display='none';nd._lsz=0;}continue;}
     const iz=1.0/(-vz);
     const size=90*iz;
