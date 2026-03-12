@@ -18,6 +18,7 @@ from typing import Optional
 import numpy as np
 from fastapi import FastAPI, HTTPException, Query, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -34,6 +35,7 @@ COSINE_LINK     = 0.45
 TOP_K_SEARCH    = 50
 
 app = FastAPI(title='Open Photo', version='1.0.0')
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(CORSMiddleware, allow_origins=['*'], allow_methods=['*'], allow_headers=['*'])
 
 db_lock = threading.Lock()

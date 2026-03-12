@@ -1005,7 +1005,7 @@ async function initBallView() {
   const container = $("view-ball");
   if (_ballNodes.length === 0) {
     $("ball-loading").style.display = "flex";
-    const limit = Math.min(_scatterLimit || 2700, 2700);
+    const limit = Math.min(_scatterLimit || 900, 900);
     const layout = await api(`/api/embedding-layout-3d?limit=${limit}`);
     const entries = Object.entries(layout.positions);
     let maxR = 0;
