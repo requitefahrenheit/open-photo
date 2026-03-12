@@ -208,7 +208,54 @@ def get_stats():
 
 
 # PCA basis vectors — computed once from first 100, reused for projecting more items
-_pca_basis = None   # (mean, Vt, proj_min, proj_range)
+_pca_basis = None      # (mean, Vt2, proj_min, proj_range)
+_pca_basis_3d = None   # (mean, Vt3, proj_min, proj_range)
+
+def compute_layout_3d(limit=100):
+    """PCA 3D layout via SVD — pure numpy. Same as compute_layout but returns x,y,z."""
+    global _pca_basis_3d
+    import numpy as np
+
+    with db_lock:
+        conn = get_db()
+        rows = conn.execute(
+            'SELECT id, clip_embedding, thumbnail_path, taken_at, caption, label, media_type '
+            'FROM media WHERE clip_embedding IS NOT NULL LIMIT ?', (limit,)
+        ).fetchall()
+
+    if len(rows) < 3:
+        return []
+
+    embs = np.array([np.frombuffer(r['clip_embedding'], dtype=np.float32) for r in rows])
+
+    if _pca_basis_3d is None:
+        basis_n = min(100, len(embs))
+        mean = embs[:basis_n].mean(axis=0)
+        centered = embs[:basis_n] - mean
+        U, S, Vt = np.linalg.svd(centered, full_matrices=False)
+        basis_proj = centered @ Vt[:3].T
+        pmin = basis_proj.min(axis=0)
+        prange = basis_proj.max(axis=0) - pmin + 1e-8
+        _pca_basis_3d = (mean, Vt[:3], pmin, prange)
+
+    mean, Vt3, pmin, prange = _pca_basis_3d
+
+    proj = (embs - mean) @ Vt3.T
+    proj = (proj - pmin) / prange
+    proj = np.clip(proj, -0.1, 1.1)
+
+    return [{
+        'id': rows[i]['id'],
+        'x': round(float(proj[i, 0]), 4),
+        'y': round(float(proj[i, 1]), 4),
+        'z': round(float(proj[i, 2]), 4),
+        'thumbnail_path': rows[i]['thumbnail_path'],
+        'taken_at': rows[i]['taken_at'],
+        'caption': (rows[i]['caption'] or '')[:80],
+        'label': rows[i]['label'],
+        'media_type': rows[i]['media_type'],
+    } for i in range(len(rows))]
+
 
 def compute_layout(limit=100):
     """PCA 2D layout via SVD — pure numpy.
@@ -349,6 +396,15 @@ async def embedding_layout(limit: int = Query(100)):
     limit = min(max(limit, 10), 5000)
     result = await asyncio.to_thread(compute_layout, limit)
     positions = {n['id']: [n['x'], n['y']] for n in result}
+    return {'positions': positions}
+
+
+@app.get('/api/embedding-layout-3d')
+async def embedding_layout_3d(limit: int = Query(100)):
+    """PCA 3D positions keyed by id. ?limit=100|300|900|2700"""
+    limit = min(max(limit, 10), 5000)
+    result = await asyncio.to_thread(compute_layout_3d, limit)
+    positions = {n['id']: [n['x'], n['y'], n['z']] for n in result}
     return {'positions': positions}
 
 

@@ -1,6 +1,6 @@
-# Open Photo — System Specification v3.0
+# Open Photo — System Specification v3.1
 
-*Updated March 2026 · covers v4 (stable) and v4.1x (experimental)*
+*Updated March 2026 · covers v4 (stable), v4.1x (experimental), and v5 (3D Ball — in development)*
 
 ---
 
@@ -9,6 +9,8 @@
 Open Photo is a private, self-hosted photo and video memory archive. It ingests a lifetime of media from Google Photos, embeds each item semantically using OpenAI's CLIP model, and exposes two primary exploration interfaces: a zoomable semantic scatter map and a Poincaré hyperbolic disk navigator. The system is designed for a single user and prioritizes visual exploration over cataloguing.
 
 The guiding philosophy is that photos should be experienced spatially by meaning, not filed chronologically. Two images taken years apart that share visual similarity appear near each other in the scatter view. Navigating in Poincaré space feels like moving through associative memory — the center photo is what you're thinking about; the orbit is everything related.
+
+A third view — **Ball** — places you inside a 3D hyperbolic sphere. Photos surround you at all angles. You turn to look. The geometry is the Poincaré ball model: the same hyperbolic metric as the disk, extended to ℝ³. You are always at center; navigation is embodied rather than map-like.
 
 ---
 
@@ -56,7 +58,8 @@ The server is kept alive by a cron watchdog that runs every minute:
 | v3.3 | op-viz-v3.3.html | ~2,500 | Chip init fix + z-sort by proximity + marooned node fix |
 | **v4** | **op-viz-v4.html** | **2,546** | **Stable baseline — tooltip removed, all bugs fixed** |
 | v4.1x | op-viz-v4.1x.html | 2,640 | Experimental render optimizations (see §6.8) |
-| current | op-viz.html | 2,640 | Same as v4.1x (may revert to v4) |
+| v7 | op-viz-v7.html | ~2,640 | Checkpoint from March 12 session |
+| current | op-viz.html | TBD | Active development (3D Ball toggle) |
 
 ---
 
@@ -165,6 +168,7 @@ PCA computed via numpy SVD. Basis vectors (mean + top-2 components) computed fro
 | GET | /api/stats | DB counts and per-year breakdown |
 | GET | /api/layout?limit=100&recompute=false | PCA 2D positions |
 | GET | /api/embedding-layout?limit=100 | PCA positions as {positions: {id: [x,y]}} |
+| GET | /api/embedding-layout-3d?limit=100 | PCA 3D positions as {positions: {id: [x,y,z]}} — for Ball view |
 | GET | /api/photos | All media as lightweight nodes |
 | GET | /api/media/{id} | Full record + faces. Boosts temperature. |
 | PATCH | /api/media/{id} | Update label, caption, or status |
@@ -420,6 +424,75 @@ pkill -f op-server.py  # cron restarts within 60s
 
 ---
 
+## 6.9 Ball View (3D Poincaré — in development)
+
+### Concept
+
+A pure WebGL2 view. You are always at the center of a unit sphere. Photos float around you at all angles and depths. Turn to look. Click a photo to drift toward it (it and its neighbors swell, filling peripheral vision). The geometry is the Poincaré ball model — the 3D analog of the disk, same hyperbolic metric, Möbius math extended to ℝ³.
+
+Default view on load: **Scatter** (unchanged). Toggle to Ball via nav tab. No view transition animation — instant switch.
+
+### Rendering
+
+**Pure shader.** No Three.js, no DOM nodes, no SVG. A single fullscreen quad + a WebGL2 fragment shader that raymarches through photo positions.
+
+- Photo positions packed into a `RGBA32F` texture (one texel per photo: x, y, z, id-index)
+- Each photo is a billboard quad (always facing camera) with thumbnail texture
+- Ray from camera origin (0,0,0) through each fragment
+- For each ray: find nearest billboard intersection, sample texture
+- Lighting: inverse-square brightness only (`color *= 1.0 / (dist * dist)`)
+- Background: pure black (`vec3(0.0)`)
+- No bloom, no aberration, no fog, no halos
+
+### Layout
+
+- Server endpoint: `GET /api/embedding-layout-3d?limit=N`
+- Returns `{positions: {id: [x, y, z]}}` — 3-component PCA, normalized to unit sphere surface
+- z = third PCA component (Vt[2] in the SVD basis)
+- Positions are spherically normalized: each vec3 pushed to `r ∈ [0.1, 0.95]` by semantic distance from mean
+- Most dissimilar photos → boundary shell; most central → close in
+
+### Navigation
+
+- **Mouse drag / touch drag**: rotate camera orientation (you turn in place)
+- **Click/tap photo**: camera translates toward it; photo swells as you approach, neighbors expand
+- **Double-click / two-finger tap**: return to origin (smooth lerp)
+- **No up/down**: camera has no gravity, no roll correction. Free orientation.
+
+### Server changes
+
+New function `compute_layout_3d(limit)` — identical to `compute_layout` but:
+- `Vt[:3]` instead of `Vt[:2]`
+- Returns `x, y, z` per item
+- Separate `_pca_basis_3d` cache (does not share with 2D basis)
+
+New endpoint:
+```python
+@app.get('/api/embedding-layout-3d')
+async def embedding_layout_3d(limit: int = Query(100)):
+    limit = min(max(limit, 10), 5000)
+    result = await asyncio.to_thread(compute_layout_3d, limit)
+    positions = {n['id']: [n['x'], n['y'], n['z']] for n in result}
+    return {'positions': positions}
+```
+
+### Frontend toggle
+
+- New nav tab: **ball** alongside scatter and poincaré
+- Default: hidden (scatter is default)
+- On activate: fetch 3D layout, pack into position texture, start rAF loop
+- On deactivate: cancel rAF, free GL resources
+- Count chips control limit for Ball view same as scatter
+
+### Known constraints
+
+- Occlusion is expected and acceptable — you turn to see what's behind
+- Mobile: gyroscope optional (deviceorientation API), fallback to touch drag
+- Hit testing: ray-sphere intersection per photo position (not screen-space)
+- Thumbnail atlas: same approach as Poincaré WebGL layer; 64×64 per slot
+
+---
+
 ## 7. Known Issues & Constraints
 
 ### 7.1 Resolved
@@ -459,10 +532,11 @@ Low taken_at coverage: most photos lack EXIF data and Google Photos JSON sidecar
 
 ### 8.1 Near-term
 
-- **Restart rclone** — finish Google Drive transfer; re-run ingest on remaining ~5k photos
+- **3D Ball view** — add `/api/embedding-layout-3d` endpoint; implement fullscreen WebGL2 raymarcher as third nav tab; toggle defaults to 2D scatter
+- **Complete ingest** — GPU machine ingest of ~20k Google Takeout photos in progress (March 12 2026); sync DB to serve machine when done
 - **Assess v4.1x** — determine if render optimizations provide real-world improvement; keep or revert
 - **Text search UI** — search bar in header; GPU sidecar or FTS fallback on serve machine
-- **Taken-at recovery** — parse Google Photos JSON sidecars for timestamps
+- **Taken-at recovery** — parse Google Photos JSON sidecars for timestamps (new ingest handles this)
 
 ### 8.2 Later
 
