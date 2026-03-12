@@ -668,6 +668,7 @@ body::before {
     <button class="count-chip" data-people="safe">safe</button>
     <button class="count-chip" data-people="people">people</button>
   </div>
+  <button id="ball-btn" style="font-family:var(--font);font-size:10px;padding:4px 10px;border:1px solid rgba(0,0,0,0.15);border-radius:6px;background:transparent;color:var(--text-dim);cursor:pointer;white-space:nowrap;margin-left:4px;" title="3D Ball view">ball</button>
   <button id="pd-jump-btn" style="display:none;font-family:var(--font);font-size:10px;padding:4px 10px;border:1px solid var(--accent);border-radius:6px;background:transparent;color:var(--accent);cursor:pointer;white-space:nowrap;margin-left:4px;" title="Jump to random photo">jump</button>
   <button id="pd-demo-btn" style="display:none;font-family:var(--font);font-size:10px;padding:4px 10px;border:1px solid rgba(0,0,0,0.15);border-radius:6px;background:transparent;color:var(--text-dim);cursor:pointer;white-space:nowrap;margin-left:4px;" title="Demo mode">demo</button>
   <button id="pd-controls-toggle" style="display:none;font-family:var(--font);font-size:10px;padding:4px 10px;border:1px solid rgba(0,0,0,0.15);border-radius:6px;background:transparent;color:var(--text-dim);cursor:pointer;white-space:nowrap;margin-left:4px;" title="Toggle controls">controls ▾</button>
@@ -769,6 +770,11 @@ body::before {
       <button id="pd-detail-close">×</button>
     </div>
     <div id="pd-tooltip"></div>
+  </div>
+
+  <!-- Ball (3D) -->
+  <div class="view" id="view-ball" style="position:absolute;inset:0;background:#000;overflow:hidden;">
+    <div id="ball-loading" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;color:rgba(255,255,255,0.4);font-size:14px;font-family:var(--font);"><div class="spinner"></div><div>loading…</div></div>
   </div>
 
   <!-- Map -->
@@ -944,17 +950,168 @@ function switchView(name) {
   _currentView = name;
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === `view-${name}`));
   document.body.classList.add('immersive');
-  // always show these — we only have poincare now
-  $('count-chips').style.display = 'flex';
-  $('people-chips').style.display = 'flex';
-  $('pd-jump-btn').style.removeProperty('display');
-  $('pd-demo-btn').style.removeProperty('display');
-  $('pd-controls-toggle').style.removeProperty('display');
-  $('pd-search-wrap').style.display = 'flex';
+
+  const isBall = name === 'ball';
+  $('count-chips').style.display = isBall ? 'none' : 'flex';
+  $('people-chips').style.display = isBall ? 'none' : 'flex';
+  $('pd-search-wrap').style.display = isBall ? 'none' : 'flex';
+  if (!isBall) {
+    $('pd-jump-btn').style.removeProperty('display');
+    $('pd-demo-btn').style.removeProperty('display');
+    $('pd-controls-toggle').style.removeProperty('display');
+  } else {
+    $('pd-jump-btn').style.display = 'none';
+    $('pd-demo-btn').style.display = 'none';
+    $('pd-controls-toggle').style.display = 'none';
+  }
+  $('ball-btn').style.color = isBall ? 'var(--accent)' : '';
+  $('ball-btn').style.borderColor = isBall ? 'var(--accent)' : '';
 
   closeDetail();
   closePersonPanel();
   if (name === 'poincare' && !_pdInitialized) initPoincareView();
+  if (name === 'ball') initBallView();
+  else pauseBallView();
+}
+
+$('ball-btn').addEventListener('click', () => {
+  switchView(_currentView === 'ball' ? 'poincare' : 'ball');
+});
+
+// ─────────────────────────────────────────────
+// Ball View (3D — DOM projection)
+// ─────────────────────────────────────────────
+let _ballNodes    = [];
+let _ballYaw      = 0;
+let _ballPitch    = 0;
+let _ballRafId    = null;
+let _ballRafOn    = false;
+const BALL_FOV    = 1.8;
+const BALL_NEAR   = 0.05;
+const BALL_MAX_SZ = 220;
+const BALL_MIN_SZ = 6;
+const BALL_SCALE  = 1.4;
+
+function pauseBallView() {
+  if (_ballRafId) { cancelAnimationFrame(_ballRafId); _ballRafId = null; }
+  _ballRafOn = false;
+}
+
+async function initBallView() {
+  console.log('[ball] initBallView called, nodes:', _ballNodes.length);
+  const container = $('view-ball');
+  if (_ballNodes.length === 0) {
+    $('ball-loading').style.display = 'flex';
+    console.log('[ball] fetching layout...');
+    let layout, photos;
+    try {
+      [layout, photos] = await Promise.all([
+        api('/api/embedding-layout-3d?limit=900'),
+        api('/api/photos')
+      ]);
+    } catch(e) {
+      console.error('[ball] fetch failed:', e);
+      $('ball-loading').querySelector('div:last-child').textContent = 'load failed';
+      return;
+    }
+    console.log('[ball] layout keys:', layout && Object.keys(layout));
+    const photoMap = {};
+    for (const p of (photos.nodes || [])) photoMap[p.id] = p;
+    const entries = Object.entries(layout.positions || {});
+    console.log('[ball] entries:', entries.length);
+    let maxR = 0;
+    const raw = entries.map(([id,[x,y,z]]) => {
+      const cx=x*2-1, cy=y*2-1, cz=z*2-1;
+      const r=Math.sqrt(cx*cx+cy*cy+cz*cz);
+      if(r>maxR) maxR=r;
+      return {id,cx,cy,cz,r,thumb:photoMap[id]?.thumbnail_path||null};
+    });
+    maxR = maxR||1;
+    container.querySelectorAll('.ball-tile').forEach(e=>e.remove());
+    _ballNodes = raw.map(({id,cx,cy,cz,r,thumb}) => {
+      const sc = BALL_SCALE*(0.35+0.65*r/maxR);
+      const norm=r||1;
+      const wx=cx/norm*sc, wy=cy/norm*sc, wz=cz/norm*sc;
+      const el=document.createElement('div');
+      el.className='ball-tile';
+      el.style.cssText='position:absolute;background-size:cover;background-position:center;background-color:#1a1a1a;border-radius:2px;will-change:left,top,width,height;cursor:pointer;display:none;';
+      if(thumb) el.style.backgroundImage=`url(${thumbUrl(thumb)})`;
+      container.appendChild(el);
+      return {id,wx,wy,wz,el,_p:null};
+    });
+    $('ball-loading').style.display='none';
+    console.log('[ball] nodes built:', _ballNodes.length);
+  }
+  // Drag to look
+  if (!container._ballEventsAdded) {
+    container._ballEventsAdded = true;
+    let _drag=false, _lx=0, _ly=0;
+    container.addEventListener('mousedown', e => { _drag=true; _lx=e.clientX; _ly=e.clientY; });
+    window.addEventListener('mouseup', () => _drag=false);
+    window.addEventListener('mousemove', e => {
+      if(!_drag||_currentView!=='ball') return;
+      _ballYaw   += (e.clientX-_lx)*0.005; _lx=e.clientX;
+      _ballPitch += (e.clientY-_ly)*0.005; _ly=e.clientY;
+      _ballPitch = Math.max(-1.4, Math.min(1.4, _ballPitch));
+    });
+    container.addEventListener('touchstart', e => { _drag=true; _lx=e.touches[0].clientX; _ly=e.touches[0].clientY; }, {passive:true});
+    container.addEventListener('touchend', () => _drag=false);
+    container.addEventListener('touchmove', e => {
+      if(_currentView!=='ball') return;
+      _ballYaw   += (e.touches[0].clientX-_lx)*0.005; _lx=e.touches[0].clientX;
+      _ballPitch += (e.touches[0].clientY-_ly)*0.005; _ly=e.touches[0].clientY;
+      _ballPitch = Math.max(-1.4, Math.min(1.4, _ballPitch));
+    }, {passive:true});
+  }
+  if (!_ballRafOn) { _ballRafOn=true; _ballFrame(); }
+  console.log('[ball] rAF started');
+}
+
+function _ballRotMat() {
+  const cy=Math.cos(_ballYaw), sy=Math.sin(_ballYaw);
+  const cp=Math.cos(_ballPitch), sp=Math.sin(_ballPitch);
+  return [cy,0,sy, sy*sp,cp,-cy*sp, -sy*cp,sp,cy*cp];
+}
+
+function _ballProject(wx,wy,wz,R,W,H) {
+  const [r0,r1,r2,r3,r4,r5,r6,r7,r8]=R;
+  const vx=r0*wx+r3*wy+r6*wz;
+  const vy=r1*wx+r4*wy+r7*wz;
+  const vz=r2*wx+r5*wy+r8*wz;
+  if(vz>-BALL_NEAR) return null;
+  const iz=1.0/(-vz);
+  const sx=(vx*BALL_FOV*iz+0.5)*W;
+  const sy=(-vy*BALL_FOV*iz+0.5)*H;
+  const size=Math.max(BALL_MIN_SZ,Math.min(BALL_MAX_SZ,90*iz));
+  return {sx,sy,size,vz};
+}
+
+function _ballFrame() {
+  if (!_ballRafOn) return;
+  const container=$('view-ball');
+  const W=container.clientWidth, H=container.clientHeight;
+  const R=_ballRotMat();
+  const visible=[];
+  for(const nd of _ballNodes) {
+    const p=_ballProject(nd.wx,nd.wy,nd.wz,R,W,H);
+    if(!p){nd.el.style.display='none';nd._p=null;continue;}
+    nd._p=p; visible.push(nd);
+  }
+  visible.sort((a,b)=>a._p.vz-b._p.vz);
+  const n=visible.length;
+  for(let i=0;i<n;i++) {
+    const nd=visible[i];
+    const {sx,sy,size,vz}=nd._p;
+    const bright=Math.min(1, 0.15+0.85/((-vz)*0.4+0.4));
+    nd.el.style.display='block';
+    nd.el.style.width=size+'px';
+    nd.el.style.height=size+'px';
+    nd.el.style.left=(sx-size/2)+'px';
+    nd.el.style.top=(sy-size/2)+'px';
+    nd.el.style.zIndex=i;
+    nd.el.style.filter=`brightness(${bright.toFixed(2)})`;
+  }
+  _ballRafId=requestAnimationFrame(_ballFrame);
 }
 
 // ─────────────────────────────────────────────
