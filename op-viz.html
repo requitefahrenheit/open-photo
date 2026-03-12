@@ -774,23 +774,8 @@ body::before {
 
   <!-- Ball (3D) -->
   <div class="view" id="view-ball" style="position:absolute;inset:0;background:#000;overflow:hidden;">
-    <div id="ball-loading" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;color:rgba(255,255,255,0.4);font-size:14px;font-family:var(--font);"><div class="spinner"></div><div>loading…</div></div>
-    <!-- Joystick overlay -->
-    <div id="ball-joystick" style="display:none;position:absolute;bottom:32px;right:28px;width:120px;height:120px;touch-action:none;user-select:none;">
-      <svg viewBox="0 0 120 120" width="120" height="120" style="position:absolute;inset:0;opacity:0.55;">
-        <!-- N -->
-        <polygon id="bjN" points="60,4 50,28 70,28" fill="#fff"/>
-        <!-- S -->
-        <polygon id="bjS" points="60,116 50,92 70,92" fill="#fff"/>
-        <!-- W -->
-        <polygon id="bjW" points="4,60 28,50 28,70" fill="#fff"/>
-        <!-- E -->
-        <polygon id="bjE" points="116,60 92,50 92,70" fill="#fff"/>
-        <!-- Center forward circle -->
-        <circle id="bjFwd" cx="60" cy="60" r="18" fill="none" stroke="#fff" stroke-width="2"/>
-        <circle cx="60" cy="60" r="6" fill="#fff"/>
-      </svg>
-    </div>
+    <canvas id="ball-canvas" style="position:absolute;inset:0;width:100%;height:100%;"></canvas>
+    <div id="ball-loading" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;color:rgba(255,255,255,0.4);font-size:14px;font-family:var(--font);"><div class="spinner"></div><div id="ball-loading-msg">loading…</div></div>
   </div>
 
   <!-- Map -->
@@ -995,88 +980,229 @@ $('ball-btn').addEventListener('click', () => {
 });
 
 // ─────────────────────────────────────────────
-// Ball View — autopilot flythrough
-// Camera flies a Catmull-Rom spline through
-// cluster centers. No user control needed.
+// Ball View — WebGL2 instanced billboard renderer
+// GPU depth test = correct z-order, zero fighting
 // ─────────────────────────────────────────────
-let _ballNodes = [];
-let _ballRafId = null;
-let _ballRafOn = false;
-const BALL_FOV    = 1.8;
-const BALL_NEAR   = 0.01;
-const BALL_MAX_SZ = 200;
-const BALL_MIN_SZ = 8;
-const BALL_SCALE  = 1.4;
-
-// Camera state
-let _bcam = [0, 0, 0];      // position
-let _blook = [0, 0, -1];    // look direction (normalized)
-let _bup   = [0, 1, 0];     // up vector
-
-// Spline waypoints (generated from cluster centers)
-let _bWaypoints = [];  // [{x,y,z}]
-let _bSplineT = 0;     // global t across all segments
-const BALL_SPLINE_SPD = 0.005;  // t units per frame
-
-// ── vector math ──
+// ── spline / vector math ──
 function _v3sub(a,b){return[a[0]-b[0],a[1]-b[1],a[2]-b[2]];}
-function _v3add(a,b){return[a[0]+b[0],a[1]+b[1],a[2]+b[2]];}
-function _v3scale(a,s){return[a[0]*s,a[1]*s,a[2]*s];}
-function _v3len(a){return Math.sqrt(a[0]*a[0]+a[1]*a[1]+a[2]*a[2]);}
-function _v3norm(a){const l=_v3len(a)||1;return[a[0]/l,a[1]/l,a[2]/l];}
-function _v3dot(a,b){return a[0]*b[0]+a[1]*b[1]+a[2]*b[2];}
+function _v3norm(a){const l=Math.sqrt(a[0]*a[0]+a[1]*a[1]+a[2]*a[2])||1;return[a[0]/l,a[1]/l,a[2]/l];}
 function _v3cross(a,b){return[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];}
 function _v3lerp(a,b,t){return[a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t,a[2]+(b[2]-a[2])*t];}
-
-// Catmull-Rom spline: returns position at t in [0,1] given 4 control points
-function _catmullRom(p0,p1,p2,p3,t) {
-  const t2=t*t, t3=t2*t;
-  return [
-    0.5*((2*p1[0])+(-p0[0]+p2[0])*t+(2*p0[0]-5*p1[0]+4*p2[0]-p3[0])*t2+(-p0[0]+3*p1[0]-3*p2[0]+p3[0])*t3),
-    0.5*((2*p1[1])+(-p0[1]+p2[1])*t+(2*p0[1]-5*p1[1]+4*p2[1]-p3[1])*t2+(-p0[1]+3*p1[1]-3*p2[1]+p3[1])*t3),
-    0.5*((2*p1[2])+(-p0[2]+p2[2])*t+(2*p0[2]-5*p1[2]+4*p2[2]-p3[2])*t2+(-p0[2]+3*p1[2]-3*p2[2]+p3[2])*t3),
+function _crPos(pts,t){
+  const n=pts.length, seg=Math.floor(t)%n, lt=t-Math.floor(t);
+  const p=i=>{const q=pts[((i%n)+n)%n];return[q.x,q.y,q.z];};
+  const [p0,p1,p2,p3]=[p(seg-1),p(seg),p(seg+1),p(seg+2)];
+  const t2=lt*lt,t3=t2*lt;
+  return[
+    0.5*((2*p1[0])+(-p0[0]+p2[0])*lt+(2*p0[0]-5*p1[0]+4*p2[0]-p3[0])*t2+(-p0[0]+3*p1[0]-3*p2[0]+p3[0])*t3),
+    0.5*((2*p1[1])+(-p0[1]+p2[1])*lt+(2*p0[1]-5*p1[1]+4*p2[1]-p3[1])*t2+(-p0[1]+3*p1[1]-3*p2[1]+p3[1])*t3),
+    0.5*((2*p1[2])+(-p0[2]+p2[2])*lt+(2*p0[2]-5*p1[2]+4*p2[2]-p3[2])*t2+(-p0[2]+3*p1[2]-3*p2[2]+p3[2])*t3),
   ];
 }
 
-// Sample spline at global t (loops)
-function _splinePos(t) {
-  const pts = _bWaypoints;
-  const n = pts.length;
-  const seg = Math.floor(t) % n;
-  const lt = t - Math.floor(t);
-  const p = i => { const p=pts[((i%n)+n)%n]; return [p.x,p.y,p.z]; };
-  return _catmullRom(p(seg-1), p(seg), p(seg+1), p(seg+2), lt);
+// ── WebGL2 state ──
+let _bGL = null;           // WebGL2 context
+let _bProg = null;         // shader program
+let _bVAO = null;
+let _bInstBuf = null;      // instance buffer (x,y,z,layer)
+let _bTex = null;          // TEXTURE_2D_ARRAY
+let _bCount = 0;           // instance count
+let _bRafId = null;
+let _bRafOn = false;
+let _bWaypoints = [];
+let _bSplineT = 0;
+let _bLook = [0,0,-1];
+const _bUp = [0,1,0];
+const BALL_SPD = 0.006;
+const TEX_SZ = 128;        // each tile: 128×128 px
+const MAX_TILES = 512;     // TEXTURE_2D_ARRAY layers
+const BALL_SCALE = 1.4;
+
+const BALL_VERT = `#version 300 es
+precision highp float;
+// per-vertex (quad corners)
+in vec2 aCorner;   // -0.5..0.5
+// per-instance
+in vec3 aPos;      // world position
+in float aLayer;   // texture layer index
+
+uniform mat4 uVP;          // view-projection matrix
+uniform vec3 uCamRight;
+uniform vec3 uCamUp;
+uniform float uBillSize;   // base world-space size
+
+out vec2 vUV;
+out float vLayer;
+out float vDepth;
+
+void main() {
+  // spherical billboard: expand corner in camera right/up
+  vec3 world = aPos
+    + uCamRight * aCorner.x * uBillSize
+    + uCamUp    * aCorner.y * uBillSize;
+  vec4 clip = uVP * vec4(world, 1.0);
+  gl_Position = clip;
+  vUV    = aCorner + 0.5;  // [0,1]
+  vLayer = aLayer;
+  vDepth = clip.z / clip.w;
+}
+`;
+
+const BALL_FRAG = `#version 300 es
+precision highp float;
+precision highp sampler2DArray;
+
+in vec2 vUV;
+in float vLayer;
+in float vDepth;
+
+uniform sampler2DArray uAtlas;
+
+out vec4 fragColor;
+
+void main() {
+  vec4 col = texture(uAtlas, vec3(vUV.x, 1.0-vUV.y, vLayer));
+  // soft circular crop
+  vec2 d = vUV - 0.5;
+  float r = dot(d,d)*4.0;  // 0 at center, 1 at corners
+  float alpha = 1.0 - smoothstep(0.85, 1.0, r);
+  if (alpha < 0.01) discard;
+  // depth fog
+  float fog = 1.0 - clamp((vDepth - 0.5)*2.0, 0.0, 0.6);
+  fragColor = vec4(col.rgb * fog, col.a * alpha);
+}
+`;
+
+function _bMakeProg(gl) {
+  function compile(type, src) {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
+      throw new Error('Shader: ' + gl.getShaderInfoLog(s));
+    return s;
+  }
+  const p = gl.createProgram();
+  gl.attachShader(p, compile(gl.VERTEX_SHADER, BALL_VERT));
+  gl.attachShader(p, compile(gl.FRAGMENT_SHADER, BALL_FRAG));
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS))
+    throw new Error('Link: ' + gl.getProgramInfoLog(p));
+  return p;
 }
 
-// Generate waypoints: k-means-lite — pick N seeds, snap to nearest node
-function _ballGenWaypoints(nodes, k=20) {
-  if (!nodes.length) return [];
-  // Pick k evenly-spaced nodes by index as seeds (spread across PCA space)
-  const step = Math.max(1, Math.floor(nodes.length / k));
-  const seeds = [];
-  for (let i = 0; i < k; i++) seeds.push(nodes[i * step % nodes.length]);
-  // Shuffle for variety
-  for (let i = seeds.length-1; i > 0; i--) {
-    const j = Math.floor(Math.random()*(i+1));
-    [seeds[i],seeds[j]] = [seeds[j],seeds[i]];
+function _bMakeVP(camPos, look, up, fovY, aspect, near, far) {
+  // View matrix
+  const f = _v3norm(look);
+  const r = _v3norm(_v3cross(f, up));
+  const u = _v3cross(r, f);
+  // Column-major for WebGL
+  const view = new Float32Array([
+     r[0],  u[0], -f[0], 0,
+     r[1],  u[1], -f[1], 0,
+     r[2],  u[2], -f[2], 0,
+    -(r[0]*camPos[0]+r[1]*camPos[1]+r[2]*camPos[2]),
+    -(u[0]*camPos[0]+u[1]*camPos[1]+u[2]*camPos[2]),
+     (f[0]*camPos[0]+f[1]*camPos[1]+f[2]*camPos[2]),
+    1
+  ]);
+  // Projection matrix
+  const t = Math.tan(fovY/2);
+  const proj = new Float32Array([
+    1/(aspect*t),0,0,0,
+    0,1/t,0,0,
+    0,0,-(far+near)/(far-near),-1,
+    0,0,-2*far*near/(far-near),0
+  ]);
+  // proj * view (column-major multiply)
+  const m = new Float32Array(16);
+  for(let c=0;c<4;c++) for(let row=0;row<4;row++) {
+    let s=0;
+    for(let k=0;k<4;k++) s+=proj[k*4+row]*view[c*4+k];
+    m[c*4+row]=s;
   }
-  // Add a small orbit offset to each so camera flies near but not through nodes
-  return seeds.map(nd => ({
-    x: nd.wx * 0.7,
-    y: nd.wy * 0.7,
-    z: nd.wz * 0.7,
-  }));
+  return m;
+}
+
+async function _bLoadAtlas(gl, nodes) {
+  const n = Math.min(nodes.length, MAX_TILES);
+  const tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D_ARRAY, tex);
+  gl.texStorage3D(gl.TEXTURE_2D_ARRAY, 1, gl.RGBA8, TEX_SZ, TEX_SZ, n);
+  gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+  // Fill with grey placeholder first
+  const grey = new Uint8Array(TEX_SZ*TEX_SZ*4).fill(60);
+  for(let i=0;i<n;i++)
+    gl.texSubImage3D(gl.TEXTURE_2D_ARRAY,0,0,0,i,TEX_SZ,TEX_SZ,1,gl.RGBA,gl.UNSIGNED_BYTE,grey);
+
+  // Load images in batches of 16 concurrently, upload each as it arrives
+  const offscreen = document.createElement('canvas');
+  offscreen.width = offscreen.height = TEX_SZ;
+  const ctx = offscreen.getContext('2d');
+  const BATCH = 16;
+  for(let start=0; start<n; start+=BATCH) {
+    const end = Math.min(start+BATCH, n);
+    await Promise.all(Array.from({length:end-start},(_,bi)=>{
+      const i = start+bi;
+      const nd = nodes[i];
+      if(!nd.thumb) return Promise.resolve();
+      return new Promise(res=>{
+        const img = new window.Image();
+        img.onload = ()=>{
+          ctx.clearRect(0,0,TEX_SZ,TEX_SZ);
+          // cover crop: centre the image
+          const s=TEX_SZ, iw=img.naturalWidth||s, ih=img.naturalHeight||s;
+          const scale=Math.max(s/iw,s/ih);
+          const dx=(s-iw*scale)/2, dy=(s-ih*scale)/2;
+          ctx.drawImage(img, dx, dy, iw*scale, ih*scale);
+          const pixels = ctx.getImageData(0,0,TEX_SZ,TEX_SZ);
+          gl.bindTexture(gl.TEXTURE_2D_ARRAY, tex);
+          gl.texSubImage3D(gl.TEXTURE_2D_ARRAY,0,0,0,i,TEX_SZ,TEX_SZ,1,
+            gl.RGBA,gl.UNSIGNED_BYTE,pixels.data);
+          res();
+        };
+        img.onerror = ()=>res();
+        img.src = thumbUrl(nd.thumb);
+      });
+    }));
+    $('ball-loading-msg').textContent = `loading… ${Math.round(end/n*100)}%`;
+  }
+  return tex;
+}
+
+function _bGenWaypoints(nodes, k=24) {
+  const step = Math.max(1, Math.floor(nodes.length/k));
+  const pts = [];
+  for(let i=0;i<k;i++) pts.push(nodes[i*step%nodes.length]);
+  for(let i=pts.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[pts[i],pts[j]]=[pts[j],pts[i]];}
+  return pts.map(nd=>({x:nd.wx*0.65, y:nd.wy*0.65, z:nd.wz*0.65}));
 }
 
 function pauseBallView() {
-  if (_ballRafId) { cancelAnimationFrame(_ballRafId); _ballRafId = null; }
-  _ballRafOn = false;
+  if (_bRafId) { cancelAnimationFrame(_bRafId); _bRafId=null; }
+  _bRafOn = false;
 }
 
 async function initBallView() {
-  const container = $('view-ball');
-  if (_ballNodes.length === 0) {
-    $('ball-loading').style.display = 'flex';
+  if (_bRafOn) return;
+  $('ball-loading').style.display = 'flex';
+  $('ball-loading-msg').textContent = 'loading…';
+
+  // Init WebGL2
+  if (!_bGL) {
+    const canvas = $('ball-canvas');
+    const gl = canvas.getContext('webgl2', {antialias:false, depth:true});
+    if (!gl) {
+      $('ball-loading-msg').textContent = 'WebGL2 not supported';
+      return;
+    }
+    _bGL = gl;
+
+    // Fetch layout + photos
     let layout, photos;
     try {
       [layout, photos] = await Promise.all([
@@ -1084,102 +1210,130 @@ async function initBallView() {
         api('/api/photos')
       ]);
     } catch(e) {
-      $('ball-loading').querySelector('div:last-child').textContent = 'load failed';
-      return;
+      $('ball-loading-msg').textContent = 'load failed'; return;
     }
     const photoMap = {};
-    for (const p of (photos.nodes || [])) photoMap[p.id] = p;
-    const entries = Object.entries(layout.positions || {});
-    let maxR = 0;
-    const raw = entries.map(([id,[x,y,z]]) => {
-      const cx=x*2-1, cy=y*2-1, cz=z*2-1;
+    for(const p of (photos.nodes||[])) photoMap[p.id]=p;
+    const entries = Object.entries(layout.positions||{});
+    let maxR=0;
+    const raw = entries.map(([id,[x,y,z]])=>{
+      const cx=x*2-1,cy=y*2-1,cz=z*2-1;
       const r=Math.sqrt(cx*cx+cy*cy+cz*cz);
-      if(r>maxR) maxR=r;
-      return {id,cx,cy,cz,r,thumb:photoMap[id]?.thumbnail_path||null};
+      if(r>maxR)maxR=r;
+      return{id,cx,cy,cz,r,thumb:photoMap[id]?.thumbnail_path||null};
     });
-    maxR = maxR||1;
-    container.querySelectorAll('.ball-tile').forEach(e=>e.remove());
-    const frag = document.createDocumentFragment();
-    _ballNodes = raw.map(({id,cx,cy,cz,r,thumb}) => {
-      const sc = BALL_SCALE*(0.35+0.65*r/maxR);
-      const norm=r||1;
-      const wx=cx/norm*sc, wy=cy/norm*sc, wz=cz/norm*sc;
-      const el=document.createElement('div');
-      el.className='ball-tile';
-      el.style.cssText='position:absolute;background-size:cover;background-position:center;background-color:#222;border-radius:2px;display:none;';
-      if(thumb) el.style.backgroundImage=`url(${thumbUrl(thumb)})`;
-      frag.appendChild(el);
-      return {id,wx,wy,wz,el,_lx:-9999,_ly:-9999,_lsz:0,_lz:-1,_lb:-1};
+    maxR=maxR||1;
+    const nodes = raw.map(({id,cx,cy,cz,r,thumb})=>{
+      const sc=BALL_SCALE*(0.35+0.65*r/maxR), norm=r||1;
+      return{id,wx:cx/norm*sc,wy:cy/norm*sc,wz:cz/norm*sc,thumb};
     });
-    // Append before the (now hidden) joystick element
-    const joy = $('ball-joystick');
-    if (joy) container.insertBefore(frag, joy); else container.appendChild(frag);
-    // Generate spline waypoints from node positions
-    _bWaypoints = _ballGenWaypoints(_ballNodes, 24);
-    // Seed camera at first waypoint
-    if (_bWaypoints.length) {
-      _bcam = [_bWaypoints[0].x, _bWaypoints[0].y, _bWaypoints[0].z];
+    _bCount = Math.min(nodes.length, MAX_TILES);
+
+    // Build shader
+    _bProg = _bMakeProg(gl);
+
+    // Quad corners (unit square, 2 triangles)
+    const corners = new Float32Array([
+      -0.5,-0.5,  0.5,-0.5,  0.5,0.5,
+      -0.5,-0.5,  0.5, 0.5, -0.5,0.5
+    ]);
+    const cornerBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, cornerBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, corners, gl.STATIC_DRAW);
+
+    // Instance data: [x,y,z,layer] per photo
+    const instData = new Float32Array(_bCount*4);
+    for(let i=0;i<_bCount;i++){
+      const nd=nodes[i];
+      instData[i*4+0]=nd.wx; instData[i*4+1]=nd.wy; instData[i*4+2]=nd.wz;
+      instData[i*4+3]=i;
     }
-    $('ball-loading').style.display='none';
+    _bInstBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, _bInstBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, instData, gl.STATIC_DRAW);
+
+    // VAO
+    _bVAO = gl.createVertexArray();
+    gl.bindVertexArray(_bVAO);
+
+    // aCorner
+    gl.bindBuffer(gl.ARRAY_BUFFER, cornerBuf);
+    const aCorner = gl.getAttribLocation(_bProg, 'aCorner');
+    gl.enableVertexAttribArray(aCorner);
+    gl.vertexAttribPointer(aCorner, 2, gl.FLOAT, false, 0, 0);
+
+    // aPos, aLayer (instanced)
+    gl.bindBuffer(gl.ARRAY_BUFFER, _bInstBuf);
+    const aPos   = gl.getAttribLocation(_bProg, 'aPos');
+    const aLayer = gl.getAttribLocation(_bProg, 'aLayer');
+    gl.enableVertexAttribArray(aPos);
+    gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, 16, 0);
+    gl.vertexAttribDivisor(aPos, 1);
+    gl.enableVertexAttribArray(aLayer);
+    gl.vertexAttribPointer(aLayer, 1, gl.FLOAT, false, 16, 12);
+    gl.vertexAttribDivisor(aLayer, 1);
+
+    gl.bindVertexArray(null);
+
+    // Load texture atlas
+    _bTex = await _bLoadAtlas(gl, nodes);
+
+    // Waypoints
+    _bWaypoints = _bGenWaypoints(nodes, 24);
+    _bSplineT = 0;
+    _bLook = [0,0,-1];
   }
-  if (!_ballRafOn) { _ballRafOn=true; _ballFrame(); }
+
+  $('ball-loading').style.display = 'none';
+  _bRafOn = true;
+  _bRafId = requestAnimationFrame(_bFrame);
 }
 
-function _ballFrame() {
-  if (!_ballRafOn) return;
+function _bFrame() {
+  if (!_bRafOn) return;
+  const gl = _bGL;
+  const canvas = $('ball-canvas');
+
+  // Resize canvas to match display
+  const W = canvas.clientWidth * devicePixelRatio | 0;
+  const H = canvas.clientHeight * devicePixelRatio | 0;
+  if (canvas.width!==W||canvas.height!==H) { canvas.width=W; canvas.height=H; }
 
   // Advance spline
-  _bSplineT += BALL_SPLINE_SPD;
-
-  // Camera position: snap directly to spline (no lag = no jitter)
-  const pos  = _splinePos(_bSplineT);
-  const posA = _splinePos(_bSplineT + 0.02); // lookahead for tangent
-  _bcam = pos;
-
-  // Look direction from spline tangent — lerp only to smooth waypoint corners
+  _bSplineT += BALL_SPD;
+  const pos  = _crPos(_bWaypoints, _bSplineT);
+  const posA = _crPos(_bWaypoints, _bSplineT+0.02);
   const tangent = _v3norm(_v3sub(posA, pos));
-  _blook = _v3norm(_v3lerp(_blook, tangent, 0.06));
+  _bLook = _v3norm(_v3lerp(_bLook, tangent, 0.05));
 
-  // Compute view matrix from cam + look + up
-  const fwd   = _blook;
-  const right  = _v3norm(_v3cross(fwd, _bup));
-  const up     = _v3cross(right, fwd);
-  // View matrix rows (world→camera)
-  // r0-r2 = right, r3-r5 = up, r6-r8 = -fwd
-  const r0=right[0], r1=right[1], r2=right[2];
-  const r3=up[0],    r4=up[1],    r5=up[2];
-  const r6=-fwd[0],  r7=-fwd[1],  r8=-fwd[2];
+  const right = _v3norm(_v3cross(_bLook, _bUp));
+  const up    = _v3cross(right, _bLook);
 
-  const container=$('view-ball');
-  const W=container.clientWidth, H=container.clientHeight;
+  const aspect = W/H;
+  const vp = _bMakeVP(pos, _bLook, _bUp, Math.PI/2.5, aspect, 0.01, 20);
 
-  for(const nd of _ballNodes) {
-    const wx=nd.wx-_bcam[0], wy=nd.wy-_bcam[1], wz=nd.wz-_bcam[2];
-    const vx=r0*wx+r1*wy+r2*wz;
-    const vy=r3*wx+r4*wy+r5*wz;
-    const vz=r6*wx+r7*wy+r8*wz;
-    if(vz>-BALL_NEAR){if(nd._lsz>0){nd.el.style.display='none';nd._lsz=0;}continue;}
-    const iz=1.0/(-vz);
-    const size=90*iz;
-    if(size<BALL_MIN_SZ){if(nd._lsz>0){nd.el.style.display='none';nd._lsz=0;}continue;}
-    const sx=(vx*BALL_FOV*iz+0.5)*W;
-    const sy=(-vy*BALL_FOV*iz+0.5)*H;
-    const csz=Math.min(BALL_MAX_SZ,size);
-    // z-index from depth — no sort needed
-    const zi=Math.round((-vz)*100);
-    const bright=+(Math.min(1, 0.2+0.8/((-vz)*0.5+0.5))).toFixed(2);
-    const l=Math.round(sx-csz/2), t=Math.round(sy-csz/2), s=Math.round(csz);
-    const el=nd.el;
-    if(nd._lsz===0) el.style.display='block';
-    if(nd._lx!==l||nd._ly!==t||nd._lsz!==s){
-      el.style.left=l+'px'; el.style.top=t+'px';
-      el.style.width=s+'px'; el.style.height=s+'px';
-      nd._lx=l; nd._ly=t; nd._lsz=s;
-    }
-    if(nd._lz!==zi){el.style.zIndex=zi; nd._lz=zi;}
-    if(nd._lb!==bright){el.style.filter='brightness('+bright+')'; nd._lb=bright;}
-  }
-  _ballRafId=requestAnimationFrame(_ballFrame);
+  gl.viewport(0,0,W,H);
+  gl.clearColor(0,0,0,1);
+  gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+  gl.enable(gl.DEPTH_TEST);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+  gl.useProgram(_bProg);
+  gl.uniformMatrix4fv(gl.getUniformLocation(_bProg,'uVP'), false, vp);
+  gl.uniform3fv(gl.getUniformLocation(_bProg,'uCamRight'), right);
+  gl.uniform3fv(gl.getUniformLocation(_bProg,'uCamUp'), up);
+  gl.uniform1f(gl.getUniformLocation(_bProg,'uBillSize'), 0.18);
+
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D_ARRAY, _bTex);
+  gl.uniform1i(gl.getUniformLocation(_bProg,'uAtlas'), 0);
+
+  gl.bindVertexArray(_bVAO);
+  gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, _bCount);
+  gl.bindVertexArray(null);
+
+  _bRafId = requestAnimationFrame(_bFrame);
 }
 
 // ─────────────────────────────────────────────
