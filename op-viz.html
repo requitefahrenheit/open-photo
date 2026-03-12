@@ -1006,19 +1006,14 @@ async function initBallView() {
   if (_ballNodes.length === 0) {
     $("ball-loading").style.display = "flex";
     const limit = Math.min(_scatterLimit || 2700, 2700);
-    const [layout, photos] = await Promise.all([
-      api(`/api/embedding-layout-3d?limit=${limit}`),
-      api("/api/photos")
-    ]);
-    const photoMap = {};
-    for (const p of photos.nodes) photoMap[p.id] = p;
+    const layout = await api(`/api/embedding-layout-3d?limit=${limit}`);
     const entries = Object.entries(layout.positions);
     let maxR = 0;
-    const raw = entries.map(([id,[x,y,z]]) => {
+    const raw = entries.map(([id,[x,y,z,thumb]]) => {
       const cx=x*2-1, cy=y*2-1, cz=z*2-1;
       const r=Math.sqrt(cx*cx+cy*cy+cz*cz);
       if(r>maxR) maxR=r;
-      return {id,cx,cy,cz,r,thumb:photoMap[id]?.thumbnail_path||null};
+      return {id,cx,cy,cz,r,thumb:thumb||null};
     });
     maxR = maxR||1;
     container.querySelectorAll(".ball-tile").forEach(e=>e.remove());

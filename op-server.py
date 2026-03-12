@@ -404,7 +404,7 @@ async def embedding_layout_3d(limit: int = Query(100)):
     """PCA 3D positions keyed by id. ?limit=100|300|900|2700"""
     limit = min(max(limit, 10), 5000)
     result = await asyncio.to_thread(compute_layout_3d, limit)
-    positions = {n['id']: [n['x'], n['y'], n['z']] for n in result}
+    positions = {n['id']: [n['x'], n['y'], n['z'], n['thumbnail_path'] or ''] for n in result}
     return {'positions': positions}
 
 
