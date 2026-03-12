@@ -1225,17 +1225,17 @@ function _ballFrame() {
   const M0 = _qmat(_bq);
   const right = [M0[0], M0[1], M0[2]];
   const up    = [M0[3], M0[4], M0[5]];
-  if (_bjHeld.N) _bq = _qnorm(_qmul(_qrot(right,  BALL_TURN_SPD), _bq));
-  if (_bjHeld.S) _bq = _qnorm(_qmul(_qrot(right, -BALL_TURN_SPD), _bq));
-  if (_bjHeld.W) _bq = _qnorm(_qmul(_qrot(up,    -BALL_TURN_SPD), _bq));
-  if (_bjHeld.E) _bq = _qnorm(_qmul(_qrot(up,     BALL_TURN_SPD), _bq));
+  if (_bjHeld.N) _bq = _qnorm(_qmul(_qrot(right, -BALL_TURN_SPD), _bq));  // N = look up
+  if (_bjHeld.S) _bq = _qnorm(_qmul(_qrot(right,  BALL_TURN_SPD), _bq));  // S = look down
+  if (_bjHeld.W) _bq = _qnorm(_qmul(_qrot(up,     BALL_TURN_SPD), _bq));  // W = look left
+  if (_bjHeld.E) _bq = _qnorm(_qmul(_qrot(up,    -BALL_TURN_SPD), _bq));  // E = look right
 
   if (_bjHeld.fwd) {
-    // Forward = -Z axis in camera space = third row of M (world-from-camera)
-    // M = _qmat(_bq) maps camera→world, so camera -Z in world = -M row2
+    // M = _qmat(_bq) is world-from-camera. Column 2 = camera +Z in world.
+    // Forward = camera -Z = -col2 = [-M[2], -M[5], -M[8]]
     const M = _qmat(_bq);
-    _bcam[0] -= M[6] * BALL_FLY_SPD;
-    _bcam[1] -= M[7] * BALL_FLY_SPD;
+    _bcam[0] -= M[2] * BALL_FLY_SPD;
+    _bcam[1] -= M[5] * BALL_FLY_SPD;
     _bcam[2] -= M[8] * BALL_FLY_SPD;
   }
 
